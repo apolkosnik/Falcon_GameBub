@@ -1,0 +1,401 @@
+//============================================================================
+//  Falcon ST-RAM / ROM arbiter on the MiSTer DDR3 port
+//
+//  Guest physical address space (24 bit) is mapped 1:1 onto the DDR3 at
+//  byte base 0x30000000: ST-RAM at 0x000000.., TOS ROM at 0xE00000 and the
+//  cartridge at 0xFA0000 are all plain DDR3 storage, loaded by the HPS
+//  through the loader port while the machine is held in reset.
+//
+//  Masters, in fixed priority order:
+//    vid  video fetch, bursts of four 64-bit words (Videl)
+//    ld   ROM/cartridge loader, byte writes (ioctl)
+//    d0   DMA port 0 (crossbar: DMA sound play/record)
+//    d1   DMA port 1 (FDC DMA)
+//    d2   DMA port 2 (blitter)
+//    d3   DMA port 3: the FPU bridge's HPS mailbox (falcon_fpu_bridge), or
+//         in measurement builds the mailbox latency probe (falcon_mbox_test)
+//    cpu  68030 data/instruction accesses, 32 bit with byte enables, or
+//         (cpu_burst) a read of the four 64-bit words from cpu_addr[23:5];
+//         its address is 28 bits wide for the ap060 build's Fast RAM
+//         (CT60 mode: guest $01000000-$0FFFFFFF, DDR3 0x31000000+), the
+//         other masters' are 24
+//         for the CPU's line cache (falcon_l2): one cpu_beat per word,
+//         cpu_ack with the last
+//
+//  One command is outstanding at a time.  DMA writes are reported on the
+//  snoop port so the CPU data cache never holds stale lines.
+//
+//  The blitter (d2) reads through a buffer of two 64-bit lines: a blit reads
+//  its source and its destination in address order, so one DDR3 read serves
+//  up to four word reads.  A hit is answered from the buffer, also while
+//  another master's command is out.  Every write that goes to the DDR3, by
+//  any master (the blitter's own included), updates a buffered copy of its
+//  line, so the buffer never holds stale data; it is emptied whenever the
+//  blitter does not own the bus (d2_hold low).  The blitter's writes are
+//  acknowledged when the command is issued (their data is in the buffer and
+//  the next command waits for this one).  A VME card's 2D engine is on the
+//  same port in a TT and moves whole 64-bit words through it (d2_wide).
+//
+//  DMA accesses (d0..d2) follow Hatari's memory banks: ST-RAM is read and
+//  written directly (SysMem_wget reads the RAM, not the ROM vectors), ROM
+//  and cartridge are read only (ROMmem_wput never stores), and anything else
+//  is a bus-error region that reads $0000 and ignores writes
+//  (STMemory_DMA_ReadWord/WriteWord).  Writes to $000000-$000007 are dropped
+//  for the DMA sound and the blitter, which go through SysMem_wput; the disk
+//  DMA copies straight into ST-RAM (fdc.c STMemory_SafeCopy, ncr5380.c) and
+//  may write there.  A dropped access is acknowledged without a DDR3 cycle.
+//  (The system sends the blitter's I/O accesses to the device bus, not here.)
+//
+//  Byte order: guest data is big endian (lowest address in the most
+//  significant byte); the DDR3 is little endian, so 64-bit words are byte
+//  reversed at this boundary and nowhere else.
+//============================================================================
+
+module falcon_memarb #(
+	parameter bit TT = 1         // 0: a Falcon only -- 24-bit DMA addresses, the CPU to [27] (Fast RAM),
+	                             //    no TT-RAM window, no 64-bit d2 (the inputs that carry them are not used)
+)(
+	input             clk,
+	input             reset,       // power-on only: the loader runs while the machine is in reset
+	input       [3:0] ram_mb,      // ST-RAM size in MB: DMA writes stop at ram_mb * 1 MB
+	input      [28:0] tt_top,      // TT: the end of TT-RAM ($01000000 up), which d1 may reach; 0 = none
+
+	// video: 4 x 64-bit read bursts
+	input             vid_req,
+	input      [23:3] vid_addr,
+	output reg        vid_ack,
+	output reg [63:0] vid_data,
+	output reg        vid_valid,
+
+	// loader: byte writes (accepted when ld_busy is low)
+	input             ld_wr,
+	input      [23:0] ld_addr,
+	input       [7:0] ld_data,
+	output            ld_busy,
+
+	// 16-bit DMA masters
+	input             d0_req,
+	input             d0_we,
+	input      [23:1] d0_addr,
+	input       [1:0] d0_be,
+	input      [15:0] d0_wdata,
+	output reg [15:0] d0_rdata,
+	output reg        d0_ack,
+
+	input             d1_req,
+	input             d1_we,
+	input      [28:1] d1_addr,      // TT-RAM too (the TT's SCSI DMA)
+	input       [1:0] d1_be,
+	input      [15:0] d1_wdata,
+	output reg [15:0] d1_rdata,
+	output reg        d1_ack,
+	output reg        d1_bad,      // with d1_ack: not memory, no access made
+
+	input             d2_req,
+	input             d2_we,
+	input      [23:1] d2_addr,
+	input       [1:0] d2_be,
+	input      [15:0] d2_wdata,
+	output reg [15:0] d2_rdata,
+	output reg        d2_ack,
+	input             d2_hold,     // the blitter owns the bus: its read buffer may keep lines
+	input             d2_vme,      // d2 is a VME card's engine in its own memory: no ST-RAM limits
+	input             d2_wide,     // d2 moves whole 64-bit words: d2_addr[2:1] is not used, a read
+	input      [63:0] d2_wdata64,  //   gives d2_rdata64, a write takes d2_wdata64 by d2_be8
+	input       [7:0] d2_be8,      //   ([7] = lowest address)
+	output reg [63:0] d2_rdata64,
+
+	input             d3_req,
+	input             d3_we,
+	input      [23:1] d3_addr,
+	input       [1:0] d3_be,
+	input      [15:0] d3_wdata,
+	output reg [15:0] d3_rdata,
+	output reg        d3_ack,
+
+	// CPU: 32 bit, level request, one-clock acknowledge
+	input             cpu_req,
+	input             cpu_we,
+	input      [28:2] cpu_addr,    // [28:24] non-zero: TT-RAM (TT mode), DDR3 0x31000000+ ($10000000+: 0x2F000000)
+	input       [3:0] cpu_be,      // [3] = lowest address (D31..D24)
+	input      [31:0] cpu_wdata,
+	output reg [31:0] cpu_rdata,
+	output reg [63:0] cpu_rdata64, // the whole 64-bit word of a read (guest order), with cpu_rdata
+	output reg        cpu_ack,
+	input             cpu_burst,   // with cpu_req, a read: four words from cpu_addr[23:5]
+	output reg        cpu_beat,    // a word of the burst in cpu_rdata64 (in address order)
+	// every write by another master (DMA, the loader), when its DDR3 command
+	// goes out: the CPU's line cache drops that line (falcon_l2)
+	output reg        owr_we,
+	output reg [23:3] owr_addr,
+
+	// snoop: a non-CPU master wrote RAM
+	output reg        snoop_we,
+	output reg [28:0] snoop_addr,
+	input             snoop_hold,   // the CPU's snoop queue is nearly full: no DMA writes for now
+
+	// MiSTer DDRAM interface
+	input             DDRAM_BUSY,
+	output reg  [7:0] DDRAM_BURSTCNT,
+	output reg [28:0] DDRAM_ADDR,
+	input      [63:0] DDRAM_DOUT,
+	input             DDRAM_DOUT_READY,
+	output reg        DDRAM_RD,
+	output reg [63:0] DDRAM_DIN,
+	output reg  [7:0] DDRAM_BE,
+	output reg        DDRAM_WE
+);
+
+function [63:0] swap64;
+	input [63:0] x;
+	swap64 = {x[7:0], x[15:8], x[23:16], x[31:24], x[39:32], x[47:40], x[55:48], x[63:56]};
+endfunction
+
+function [7:0] rev8;
+	input [7:0] x;
+	rev8 = {x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7]};
+endfunction
+
+// the bytes of a write (guest order, be[7] = lowest address) over a line
+function [63:0] merge64;
+	input [63:0] old;
+	input [63:0] wd;
+	input  [7:0] be;
+	integer i;
+	for (i = 0; i < 8; i = i + 1) merge64[8*i +: 8] = be[i] ? wd[8*i +: 8] : old[8*i +: 8];
+endfunction
+
+localparam [28:0] DDR_BASE = 29'h6000000;    // byte 0x30000000 / 8
+localparam [28:0] DDR_TOP16 = 29'h5E00000;   // byte 0x2F000000 / 8
+
+// the TT's wide paths, or a Falcon's narrow ones (TT = 0)
+wire [28:1] d1_a   = TT ? d1_addr : {5'd0, d1_addr[23:1]};
+wire [28:2] cpu_a  = TT ? cpu_addr : {1'b0, cpu_addr[27:2]};
+wire [28:0] ttt    = TT ? tt_top : 29'd0;
+wire        d2_w64 = TT && d2_wide;
+wire        d2_vm  = TT && d2_vme;
+
+// loader: one byte write is captured and held until the arbiter takes it
+reg        ld_pend = 0;
+reg        ld_take;
+reg [23:0] ld_a;
+reg  [7:0] ld_d;
+assign ld_busy = ld_pend;
+
+localparam M_VID = 3'd0, M_LD = 3'd1, M_D0 = 3'd2, M_D1 = 3'd3, M_D2 = 3'd4, M_CPU = 3'd5, M_D3 = 3'd6;
+
+localparam S_IDLE = 2'd0, S_CMD = 2'd1, S_READ = 2'd2;
+reg  [1:0] st;
+reg  [2:0] owner;
+reg  [1:0] sub;         // 16-bit word index or 32-bit half within the 64-bit word
+reg  [1:0] beats;
+reg        cmd_we;
+reg        cmd_burst;   // a CPU burst read
+
+// the selected master's request, in guest big-endian form
+reg        g_we;
+reg [28:3] g_addr;
+reg [63:0] g_wdata;
+reg  [7:0] g_be;        // [7] = lowest address
+reg  [2:0] g_owner;
+reg  [1:0] g_sub;
+reg        g_any;
+reg [1:0]  g_dma_be;
+reg        g_ok;        // 0: a DMA access outside writable/readable memory, no DDR3 cycle
+
+wire [23:0] ram_top = {ram_mb, 20'd0};
+
+always @* begin : sel
+	reg [28:0] wa;
+	reg [28:3] dma_a;
+	reg [15:0] dma_w;
+	g_dma_be = 0; g_any = 1; g_we = 0; g_addr = 0; g_wdata = 0; g_be = 0; g_owner = M_CPU; g_sub = 0; g_ok = 1;
+	if (vid_req) begin
+		g_owner = M_VID; g_be = 8'hFF;
+	end else if (ld_pend) begin
+		g_owner = M_LD; g_we = 1; g_be = 8'h80 >> ld_a[2:0];
+	end else if (d0_req && !(snoop_hold && d0_we)) begin
+		g_owner = M_D0; g_we = d0_we; g_sub = d0_addr[2:1]; g_dma_be = d0_be;
+	end else if (d1_req && !(snoop_hold && d1_we)) begin
+		g_owner = M_D1; g_we = d1_we; g_sub = d1_a[2:1]; g_dma_be = d1_be;
+	end else if (d2_req && !(snoop_hold && d2_we)) begin
+		g_owner = M_D2; g_we = d2_we; g_sub = d2_addr[2:1]; g_dma_be = d2_be;
+	end else if (d3_req && !(snoop_hold && d3_we)) begin
+		g_owner = M_D3; g_we = d3_we; g_sub = d3_addr[2:1]; g_dma_be = d3_be;
+	end else if (cpu_req) begin
+		g_owner = M_CPU; g_we = cpu_we; g_sub = {cpu_a[2], 1'b0};
+		g_be = cpu_a[2] ? {4'd0, cpu_be} : {cpu_be, 4'd0};
+	end else g_any = 0;
+
+	// the address and data by owner (a DMA master's word sits on all four lanes)
+	case (g_owner)
+		M_D0:    begin dma_a = {5'd0, d0_addr[23:3]}; dma_w = d0_wdata; end
+		M_D1:    begin dma_a = d1_a[28:3]; dma_w = d1_wdata; end   // TT-RAM too
+		M_D2:    begin dma_a = {5'd0, d2_addr[23:3]}; dma_w = d2_wdata; end
+		default: begin dma_a = {5'd0, d3_addr[23:3]}; dma_w = d3_wdata; end
+	endcase
+	case (g_owner)
+		M_VID:   begin g_addr = {5'd0, vid_addr};   g_wdata = 64'd0; end
+		M_LD:    begin g_addr = {5'd0, ld_a[23:3]}; g_wdata = {8{ld_d}}; end
+		M_CPU:   begin g_addr = cpu_burst ? {cpu_a[28:5], 2'b00} : cpu_a[28:3]; g_wdata = {2{cpu_wdata}}; end
+		default: begin g_addr = dma_a; g_wdata = {4{dma_w}}; end
+	endcase
+
+    if (g_owner == M_D0 || g_owner == M_D1 || g_owner == M_D2 || g_owner == M_D3)
+        g_be = {g_dma_be, 6'd0} >> {g_sub, 1'b0};
+	// the VME card's 2D engine moves whole 64-bit words (TT)
+	if (g_owner == M_D2 && d2_w64) begin g_wdata = d2_wdata64; g_be = d2_be8; end
+
+	// memory types for the DMA masters
+	wa = {g_addr, g_sub, 1'b0};
+	if (g_owner == M_D0 || g_owner == M_D1 || g_owner == M_D2) begin
+		if (g_we)
+			g_ok = (wa < ram_top) && (wa[23:3] != 21'd0 || g_owner == M_D1);
+		else
+			g_ok = (wa < ram_top) || (wa[28:24] == 5'd0 && ((wa[23:19] == 5'b11100) || (wa[23:17] == 7'b1111101)));
+		if (g_owner == M_D1 && wa[28:24] != 5'd0 && wa < ttt) g_ok = 1;
+		if (g_owner == M_D2 && d2_vm) g_ok = 1;
+	end
+end
+
+wire [63:0] rd_be = swap64(DDRAM_DOUT);      // guest order
+
+// the blitter's read buffer (guest order)
+reg   [1:0] b_v = 2'b00;
+reg  [23:3] b_tag0, b_tag1;
+reg  [63:0] b_dat0, b_dat1;
+reg         b_lru = 0;          // the entry the next fill replaces
+wire        b_h0   = b_v[0] && (b_tag0 == d2_addr[23:3]);
+wire        b_h1   = b_v[1] && (b_tag1 == d2_addr[23:3]);
+wire [63:0] b_line = b_h0 ? b_dat0 : b_dat1;
+// a read hit (not the request just acknowledged, nor that of a read in the DDR3)
+wire        d2_hit = d2_req && !d2_we && !d2_ack && (b_h0 || b_h1) && !(st != S_IDLE && owner == M_D2 && !cmd_we);
+wire        g_hit  = (g_owner == M_D2) && d2_hit;
+// a master that was acknowledged last clock still shows its old request this
+// clock, so never start right after an acknowledge
+wire        ack_blk = d0_ack | d1_ack | d2_ack | d3_ack | cpu_ack;
+
+always @(posedge clk) begin
+	vid_ack <= 0; vid_valid <= 0;
+	d0_ack <= 0; d1_ack <= 0; d2_ack <= 0; cpu_ack <= 0; d1_bad <= 0;
+	d3_ack <= 0;
+	snoop_we <= 0;
+	cpu_beat <= 0;
+	owr_we <= 0;
+
+	ld_take = 0;
+
+	if (reset) begin
+		st <= S_IDLE;
+		DDRAM_RD <= 0;
+		DDRAM_WE <= 0;
+	end
+	else case (st)
+	S_IDLE:
+		if (g_any && !g_ok && !ack_blk && !g_hit) begin
+			// bus-error region, ROM write or reset-vector write: no DDR3 cycle
+			// (g_ok is checked for d0..d2 only; the d3 mailbox is always a DDR3 cycle)
+			case (g_owner)
+				M_D0:    begin d0_rdata <= 16'h0000; d0_ack <= 1; end
+				M_D1:    begin d1_rdata <= 16'h0000; d1_ack <= 1; d1_bad <= 1; end
+				default: begin d2_rdata <= 16'h0000; d2_ack <= 1; end
+			endcase
+		end
+		else if (g_any && !ack_blk && !g_hit) begin
+			owner      <= g_owner;
+			sub        <= g_sub;
+			cmd_we     <= g_we;
+			// guest $00000000-$0FFFFFFF at DDR3 0x30000000 (ST-RAM, ROM, TT-RAM to 240 MB); the
+			// last 16 MB of 256 MB TT-RAM ($10000000-$10FFFFFF) at 0x2F000000, unused by the
+			// framework (scaler 0x20000000, Main's framebuffer 0x22000000)
+			DDRAM_ADDR <= g_addr[28] ? (DDR_TOP16 | {8'd0, g_addr[23:3]}) : (DDR_BASE | {4'd0, g_addr[27:3]});
+			DDRAM_BURSTCNT <= (g_owner == M_VID || (g_owner == M_CPU && cpu_burst && !g_we)) ? 8'd4 : 8'd1;
+			cmd_burst  <= (g_owner == M_CPU && cpu_burst && !g_we);
+			DDRAM_DIN  <= swap64(g_wdata);
+			DDRAM_BE   <= g_we ? rev8(g_be) : 8'hFF;
+			DDRAM_WE   <= g_we;
+			DDRAM_RD   <= !g_we;
+			beats      <= 0;
+			st         <= S_CMD;
+			if (g_owner == M_VID) vid_ack <= 1;
+			if (g_owner == M_LD)  ld_take = 1;
+			if (g_we && g_owner != M_CPU && g_owner != M_LD) begin
+				snoop_we   <= 1;
+				snoop_addr <= {g_addr, g_sub, 1'b0};
+			end
+			if (g_we && g_owner != M_CPU) begin
+				owr_we   <= 1;
+				owr_addr <= g_addr[23:3];
+			end
+			if (g_we && g_owner == M_D2) d2_ack <= 1;
+			if (g_we && b_v[0] && b_tag0 == g_addr) b_dat0 <= merge64(b_dat0, g_wdata, g_be);
+			if (g_we && b_v[1] && b_tag1 == g_addr) b_dat1 <= merge64(b_dat1, g_wdata, g_be);
+		end
+
+	S_CMD:
+		if (!DDRAM_BUSY) begin
+			DDRAM_RD <= 0;
+			DDRAM_WE <= 0;
+			if (cmd_we) begin
+				st <= S_IDLE;
+				case (owner)
+					M_D0:  d0_ack  <= 1;
+					M_D1:  d1_ack  <= 1;
+					M_D3:  d3_ack  <= 1;
+					M_CPU: cpu_ack <= 1;
+					default: ;
+				endcase
+			end
+			else st <= S_READ;
+		end
+
+	S_READ:
+		if (DDRAM_DOUT_READY) begin
+			case (owner)
+				M_VID: begin
+					vid_data  <= rd_be;
+					vid_valid <= 1;
+					beats     <= beats + 1'd1;
+					if (beats == 2'd3) st <= S_IDLE;
+				end
+				M_D0:  begin d0_rdata <= rd_be[63 - 16 * sub -: 16]; d0_ack <= 1; st <= S_IDLE; end
+				M_D1:  begin d1_rdata <= rd_be[63 - 16 * sub -: 16]; d1_ack <= 1; st <= S_IDLE; end
+				M_D2:  begin
+					d2_rdata <= rd_be[63 - 16 * sub -: 16]; d2_ack <= 1; st <= S_IDLE;
+					d2_rdata64 <= rd_be;
+					if (b_lru) begin b_dat1 <= rd_be; b_tag1 <= DDRAM_ADDR[20:0]; b_v[1] <= 1; end
+					else       begin b_dat0 <= rd_be; b_tag0 <= DDRAM_ADDR[20:0]; b_v[0] <= 1; end
+					b_lru <= !b_lru;
+				end
+				M_D3:  begin d3_rdata <= rd_be[63 - 16 * sub -: 16]; d3_ack <= 1; st <= S_IDLE; end
+				default:
+					if (cmd_burst) begin
+						cpu_rdata64 <= rd_be;
+						cpu_beat    <= 1;
+						beats       <= beats + 1'd1;
+						if (beats == 2'd3) begin cpu_ack <= 1; st <= S_IDLE; end
+					end else begin
+						cpu_rdata <= sub[1] ? rd_be[31:0] : rd_be[63:32]; cpu_rdata64 <= rd_be; cpu_ack <= 1; st <= S_IDLE;
+					end
+			endcase
+		end
+
+	default: st <= S_IDLE;
+	endcase
+
+	// a new loader byte wins over the clear of the one just taken
+	if (ld_wr) begin
+		ld_pend <= 1; ld_a <= ld_addr; ld_d <= ld_data;
+	end
+	else if (ld_take) ld_pend <= 0;
+
+	if (d2_hit) begin
+		d2_rdata <= b_line[63 - 16 * d2_addr[2:1] -: 16];
+		d2_rdata64 <= b_line;
+		d2_ack   <= 1;
+		b_lru    <= b_h0;
+	end
+	if (reset || !d2_hold) b_v <= 2'b00;
+end
+
+endmodule

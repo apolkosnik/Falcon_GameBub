@@ -1,0 +1,44 @@
+diff -ru a/firmware/lightgun/src/keyboard.rs b/firmware/lightgun/src/keyboard.rs
+--- a/firmware/lightgun/src/keyboard.rs	2026-11-24 01:30:02.041115153 -0500
++++ b/firmware/lightgun/src/keyboard.rs	2026-11-24 01:30:02.077036609 -0500
+@@ -121,7 +121,7 @@
+ /// The keyboard register of a core, by its ID (core.json), if it takes one.
+ pub fn target_for_core(core_id: &str) -> Option<Target> {
+     match core_id {
+-        id if crate::is_minimig(id) => Some(TARGET_MINIMIG),
++        id if crate::has_minimig_input(id) => Some(TARGET_MINIMIG),
+         _ => None,
+     }
+ }
+diff -ru a/firmware/lightgun/src/lib.rs b/firmware/lightgun/src/lib.rs
+--- a/firmware/lightgun/src/lib.rs	2026-11-24 01:30:02.039115128 -0500
++++ b/firmware/lightgun/src/lib.rs	2026-11-24 01:30:02.077001399 -0500
+@@ -137,6 +137,16 @@
+     }
+ }
+ 
++/// The Atari Falcon core (apolkosnik/Falcon_GameBub): a mouse and a keyboard
++/// at the Minimig core's registers (its `rtl/gamebub/gb_host.sv`).
++pub const CORE_FALCON: &str = "apolkosnik.Falcon";
++
++/// Whether a core takes the dock's mouse and keyboard at the Minimig core's
++/// registers: the Minimig core, its variants, and the Falcon core.
++pub fn has_minimig_input(core_id: &str) -> bool {
++    is_minimig(core_id) || core_id == CORE_FALCON
++}
++
+ /// The light gun registers of a core, by its ID (core.json), if it takes one.
+ pub fn target_for_core(core_id: &str) -> Option<Target> {
+     match core_id {
+diff -ru a/firmware/lightgun/src/mouse.rs b/firmware/lightgun/src/mouse.rs
+--- a/firmware/lightgun/src/mouse.rs	2026-11-24 01:30:02.043115177 -0500
++++ b/firmware/lightgun/src/mouse.rs	2026-11-24 01:30:02.077100840 -0500
+@@ -281,7 +281,7 @@
+ pub fn target_for_core(core_id: &str) -> Option<Target> {
+     match core_id {
+         crate::CORE_3DO => Some(TARGET_3DO),
+-        id if crate::is_minimig(id) => Some(TARGET_MINIMIG),
++        id if crate::has_minimig_input(id) => Some(TARGET_MINIMIG),
+         _ => None,
+     }
+ }

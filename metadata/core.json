@@ -1,0 +1,18 @@
+{
+	"min_firmware": "1.1.0-beta5",
+	"metadata": {
+		"id": "apolkosnik.Falcon",
+		"name": "Atari Falcon030",
+		"author": "apolkosnik",
+		"version": "0.1.0",
+		"release_date": "2026-11-24",
+		"url": "https://github.com/apolkosnik/Falcon_GameBub",
+		"license": "GPL-2.0-or-later"
+	},
+	"bitstreams": [
+		{
+			"target": "gamebub_rev4",
+			"filename": "FalconCore-gamebub_rev4.bit"
+		}
+	]
+}

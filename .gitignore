@@ -1,0 +1,10 @@
+/out
+/build
+/sim/obj_dir*
+/sim/out*
+/sim/media
+/sim/*.log
+/sim/sdr/obj_*
+/sim/fb/obj_*
+/sim/asm/*.PRG
+__pycache__/
