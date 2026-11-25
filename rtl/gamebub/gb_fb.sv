@@ -260,7 +260,20 @@ wire       m_done_tgl;            // from clk_mem
 (* ASYNC_REG = "TRUE" *) reg [2:0] done_s = 3'd0;
 reg        q_busy = 1'b0;
 reg  [9:0] f_next = 10'd0;        // the next source line to fetch
-reg  [9:0] tag [0:3];
+// the source line in each buffer: four registers, written and read with
+// constant indices. (As `reg [9:0] tag [0:3]` written at tag[f_next[1:0]],
+// Vivado 2018.3 made a distributed RAM of it addressed by all of f_next on
+// the write side and by the buffer number on the read side: lines from the
+// fifth on were never found ready, and the panel showed four columns.)
+reg  [9:0] tag0 = 10'd0, tag1 = 10'd0, tag2 = 10'd0, tag3 = 10'd0;
+function automatic [9:0] tag_of(input [1:0] i, input [9:0] t0, input [9:0] t1, input [9:0] t2, input [9:0] t3);
+	case (i)
+		2'd0: tag_of = t0;
+		2'd1: tag_of = t1;
+		2'd2: tag_of = t2;
+		default: tag_of = t3;
+	endcase
+endfunction
 reg  [3:0] rdy = 4'd0;
 reg [19:0] f_base;                // f_next's first pixel (relative to the frame)
 
@@ -379,7 +392,12 @@ always @(posedge clk_av) begin
 		q_step <= v_hdmi ? 10'd1 : v_s;
 		q_cnt  <= c_p;
 		q_slot <= f_next[1:0];
-		tag[f_next[1:0]] <= f_next;
+		case (f_next[1:0])
+			2'd0: tag0 <= f_next;
+			2'd1: tag1 <= f_next;
+			2'd2: tag2 <= f_next;
+			default: tag3 <= f_next;
+		endcase
 		rdy[f_next[1:0]] <= 1'b0;
 		q_tgl  <= ~q_tgl;
 		q_busy <= 1'b1;
@@ -416,8 +434,8 @@ always @(posedge clk_av) begin
 	p3_k_ok <= k_ok1;
 	// 4: the buffer
 	p4_a  <= {p3_k[1:0], p3_j};
-	p4_ok <= p3_in && p3_k_ok && rdy[p3_k[1:0]] && tag[p3_k[1:0]] == p3_k && p3_j < c_p;
-	if (p3_in && p3_k_ok && !(rdy[p3_k[1:0]] && tag[p3_k[1:0]] == p3_k) && p3_j == 10'd0 && ~&dbg_late)
+	p4_ok <= p3_in && p3_k_ok && rdy[p3_k[1:0]] && tag_of(p3_k[1:0], tag0, tag1, tag2, tag3) == p3_k && p3_j < c_p;
+	if (p3_in && p3_k_ok && !(rdy[p3_k[1:0]] && tag_of(p3_k[1:0], tag0, tag1, tag2, tag3) == p3_k) && p3_j == 10'd0 && ~&dbg_late)
 		dbg_late <= dbg_late + 16'd1;
 	// 5, 6: read
 	p5_q  <= lbuf[p4_a];

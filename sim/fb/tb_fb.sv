@@ -307,15 +307,27 @@ initial begin
 	end
 end
 
+`ifdef GLS
+// netlist probe: the fetch logic at the first pixels of a few columns
+wire [9:0] g_need = {dut.\need_reg_n_0_[9] , dut.\need_reg_n_0_[8] , dut.\need_reg_n_0_[7] , dut.\need_reg_n_0_[6] ,
+                     dut.\need_reg_n_0_[5] , dut.\need_reg_n_0_[4] , dut.\need_reg_n_0_[3] , dut.\need_reg_n_0_[2] ,
+                     dut.\need_reg_n_0_[1] , dut.\need_reg_n_0_[0] };
+always @(posedge clk_av) if ($test$plusargs("probe") && av_y < 3 && av_x >= 38 && av_x <= 48 && screens == 1)
+	$display("probe x %0d y %0d: need %0d k_cur %0d k_ok1 %b k_ok %b f_next %0d q_busy %b calc %b%b%b%b", av_x, av_y,
+	         g_need, dut.k_cur_reg__0, dut.k_ok1, dut.k_ok_reg__0, dut.f_next, dut.q_busy,
+	         dut.\calc_reg_n_0_[3] , dut.\calc_reg_n_0_[2] , dut.\calc_reg_n_0_[1] , dut.\calc_reg_n_0_[0] );
+`endif
 // the colour 12 clocks after the pixel was named
+`ifndef GLS
 reg [15:0] late_d = 0;
 always @(posedge clk_av) begin
 	late_d <= late;
 	if (late != late_d && late < 8 && $test$plusargs("dbg"))
 		$display("late at %0t: x %0d y %0d need %0d f_next %0d rdy %b q_busy %b tags %0d %0d %0d %0d c_s %0d c_p %0d o_s %0d e_s %0d",
-		         $time, av_x, av_y, dut.need, dut.f_next, dut.rdy, dut.q_busy, dut.tag[0], dut.tag[1], dut.tag[2], dut.tag[3],
+		         $time, av_x, av_y, dut.need, dut.f_next, dut.rdy, dut.q_busy, dut.tag0, dut.tag1, dut.tag2, dut.tag3,
 		         dut.c_s, dut.c_p, dut.o_s, dut.e_s);
 end
+`endif
 always @(posedge clk_av) begin
 	hx[0] <= av_x; hy[0] <= av_y;
 	for (int i = 1; i < 12; i++) begin hx[i] <= hx[i-1]; hy[i] <= hy[i-1]; hv[i] <= hv[i-1]; end

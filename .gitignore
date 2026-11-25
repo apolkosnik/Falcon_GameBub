@@ -8,3 +8,7 @@
 /sim/fb/obj_*
 /sim/asm/*.PRG
 __pycache__/
+/sim/gls/work*
+/sim/gls/*.log
+/sim/panel/obj_*
+/sim/panel/*.log

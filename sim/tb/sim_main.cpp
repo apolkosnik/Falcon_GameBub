@@ -320,6 +320,8 @@ int main(int argc, char **argv) {
 	const long av_line = hdmi ? 1650 : 504, av_lines = hdmi ? 750 : 810;
 	struct Named { int x, y; bool v; };
 	Named hist[13] = {};
+	int pd_x = 0, pd_y = 0, pd_cur = 0;
+	bool pd_vsync = true, pd_locked = true, pd_resync_ready = false, pd_resync_wait = false;
 
 	double next_pc = pc_every;
 	uint64_t stop_half = (uint64_t)(run_ms * 1e-3 / (T_MEM / 2));
@@ -344,22 +346,57 @@ int main(int argc, char **argv) {
 		top->eval();
 
 		if (av_rise) {
-			// what was named 12 clocks ago comes out now
+			// what the core took 12 clocks ago (a name is set after an edge
+			// and taken by the core at the next one) comes out now
+			for (int k = 12; k > 0; k--) hist[k] = hist[k - 1];
 			Named &h = hist[12];
 			if (h.v && h.x >= 0 && h.x < SW && h.y >= 0 && h.y < SH) screen[h.y * SW + h.x] = top->av_color;
-			for (int k = 12; k > 0; k--) hist[k] = hist[k - 1];
 			long line = av_t / av_line, pos = av_t % av_line;
 			Named n{-1, -1, false};
 			if (!hdmi) {
-				// columns 0..9 blank (sync), then the panel's 800 columns
-				top->av_sync = (line < 1);
-				if (line == 0 && pos == 0) { top->av_frame = last_complete; shown = last_complete; }
-				if (line >= 10 && pos < 480) {
-					int col = (int)line - 10;
-					top->av_x = (col - 12) & 0x7FF;
-					top->av_y = (int)pos;
-					n = {col - 12, (int)pos, col >= 12 && col < 12 + 720};
-				} else { top->av_x = 0x7FF; top->av_y = 500; }
+				// the panel as the framework drives it on rev 4: the ILI9806E
+				// driver (display/ILI9806E.scala, 25.93 MHz: lines of 535
+				// clocks, 4 sync + 2 back porch + 800 active lines, then front
+				// porch until a new frame of the core's is ready, 255 lines at
+				// most) and HandheldTop's external picture: x = pixelY - 12
+				// (11 bits), y = pixelX + 13 (10 bits), sync = vsync, both a
+				// register later; frame = the driver's frame. Outside the
+				// active area x and y run on (and wrap) as they do there.
+				const int TW = 535, HS = 4, HBP = 49, VS = 4, VBP = 2, VACT = 800, THMIN = 808, THMAX = 1061;
+				int pixelX = (pd_x - (HS + HBP)) & 511, pixelY = (pd_y - (VS + VBP)) & 4095;
+				top->av_x = (pixelY - 12) & 0x3FF;     // (10 bits in the generated HandheldTop)
+				top->av_y = (pixelX + 13) & 0x1FF;     // (9 bits)
+				top->av_sync = pd_vsync;
+				top->av_frame = pd_cur;
+				shown = pd_cur;
+				bool line_active = pd_y >= VS + VBP && pd_y < VS + VBP + VACT;
+				int nx = top->av_x, ny = top->av_y;
+				n = {nx, ny, line_active && nx < 720 && ny < 480};
+				// the driver
+				if (pd_x == TW - 1) {
+					pd_x = 0;
+					int y0 = pd_y;
+					pd_y++;
+					bool newready = (last_complete != pd_cur), start = false;
+					if (y0 == VS - 1) pd_vsync = false;
+					else if (y0 >= THMIN - 1 && newready) {
+						if (pd_resync_ready) { pd_resync_ready = false; pd_resync_wait = true; pd_cur = last_complete; }
+						else { start = true; pd_resync_wait = false; pd_locked = true; }
+					} else if (pd_resync_wait) {
+						if (y0 == THMAX * 2) { pd_locked = false; start = true; pd_resync_wait = false; }
+					} else if (!pd_locked && y0 >= THMIN - 1) start = true;
+					else if (y0 == THMAX - 1) { pd_locked = false; start = true; }
+					if (y0 < THMIN - 1 && newready) pd_resync_ready = true;
+					if (start) {
+						pd_vsync = true; pd_y = 0; pd_cur = last_complete;
+						scr_n++;
+						last_screen_sum = checksum(screen);
+						if (screens_dir && scr_n % screen_every == 0) {
+							char p[512]; snprintf(p, sizeof p, "%s/screen_%04d.ppm", screens_dir, scr_n);
+							write_ppm(p, SW, SH, screen);
+						}
+					}
+				} else pd_x++;
 			} else {
 				// HDMI: line 720 starts the blank (sync), lines 0..719 the picture
 				long y = (line + 720) % 750;
@@ -367,10 +404,11 @@ int main(int argc, char **argv) {
 				if (y == 720 && pos == 0) top->av_frame = last_complete;
 				top->av_x = (int)pos; top->av_y = (int)y;
 				n = {(int)pos, (int)y, y < 720 && pos < 1280};
+				if (y == 720 && pos == 0) shown = last_complete;
 			}
 			hist[0] = n;
 			av_t++;
-			if (av_t == av_line * av_lines) {
+			if (hdmi && av_t == av_line * av_lines) {
 				av_t = 0;
 				scr_n++;
 				last_screen_sum = checksum(screen);
