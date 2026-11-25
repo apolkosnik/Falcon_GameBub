@@ -45,7 +45,7 @@ module MMCME2_BASE #(
 	// the bench checks the configuration it models (gb_clocks.sv)
 	initial begin
 		if (DIVCLK_DIVIDE != 2 || CLKFBOUT_MULT_F != 38.375 || CLKOUT0_DIVIDE_F != 10.0 ||
-		    CLKOUT1_DIVIDE != 30 || CLKOUT2_DIVIDE != 5 || CLKOUT4_DIVIDE != 10)
+		    CLKOUT1_DIVIDE != 30 || CLKOUT2_DIVIDE != 5 || CLKOUT4_DIVIDE != 10 || CLKOUT5_DIVIDE != 20)
 			$fatal(1, "MMCME2_BASE model: unexpected configuration");
 	end
 	assign CLKOUT0 = `TB_TOP.clk_mem;
@@ -53,7 +53,11 @@ module MMCME2_BASE #(
 	assign CLKOUT2 = `TB_TOP.clk_mem;
 	assign CLKOUT3 = `TB_TOP.clk_sys;
 	assign CLKOUT4 = `TB_TOP.clk_mem;   // (its phase delay is timed by Vivado, not simulated)
+`ifdef FALCON_CPU060
+	assign CLKOUT5 = `TB_TOP.clk_cpu;   // the 68060 variant's processor clock
+`else
 	assign CLKOUT5 = 1'b0;
+`endif
 	assign {CLKOUT0B, CLKOUT1B, CLKOUT2B, CLKOUT3B, CLKOUT6, CLKFBOUTB} = '0;
 	assign CLKFBOUT = CLKIN1;
 	assign LOCKED = `TB_TOP.mmcm_locked;

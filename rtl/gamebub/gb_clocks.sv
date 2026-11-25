@@ -8,6 +8,9 @@
 //                 >= 160 MHz from a 50 MHz input)
 //   CLKOUT2  /5   191.875 MHz  host SPI
 //   CLKOUT3  /N   display clock (N from FalconCore.scala)
+//   CLKOUT5  /20  47.969 MHz   clk_cpu: the 68060 variant's processor
+//                 (asynchronous to the others there, as on MiSTer, where it
+//                 runs at 50 MHz; not used by the 68030 build)
 //   CLKOUT4  /10  95.9375 MHz  SDRAM clock: clk_mem delayed by 58.5 deg
 //                 (1.694 ns, 13 steps of 4.5 deg), drives only the ODDR that
 //                 forwards it (inverted) to the SDRAM pin, as the Game Bub
@@ -27,13 +30,14 @@ module gb_clocks
 	output wire clk_mem,
 	output wire clk_sys,
 	output wire clk_sdram,
+	output wire clk_cpu,
 	output wire clk_display,
 	output wire clk_spi,
 	output wire locked
 );
 
 wire clk_fb, clk_fb_buf;
-wire clk_mem_u, clk_sys_u, clk_sdram_u;
+wire clk_mem_u, clk_sys_u, clk_sdram_u, clk_cpu_u;
 
 MMCME2_BASE #(
 	.BANDWIDTH          ("OPTIMIZED"),
@@ -47,18 +51,21 @@ MMCME2_BASE #(
 	.CLKOUT2_DIVIDE     (5),
 	.CLKOUT3_DIVIDE     (DISPLAY_DIVIDER),
 	.CLKOUT4_DIVIDE     (10),
+	.CLKOUT5_DIVIDE     (20),
 
 	.CLKOUT0_PHASE      (0.0),
 	.CLKOUT1_PHASE      (0.0),
 	.CLKOUT2_PHASE      (0.0),
 	.CLKOUT3_PHASE      (0.0),
 	.CLKOUT4_PHASE      (58.5),
+	.CLKOUT5_PHASE      (0.0),
 
 	.CLKOUT0_DUTY_CYCLE (0.5),
 	.CLKOUT1_DUTY_CYCLE (0.5),
 	.CLKOUT2_DUTY_CYCLE (0.5),
 	.CLKOUT3_DUTY_CYCLE (0.5),
 	.CLKOUT4_DUTY_CYCLE (0.5),
+	.CLKOUT5_DUTY_CYCLE (0.5),
 
 	.STARTUP_WAIT       ("FALSE")
 ) mmcm (
@@ -71,7 +78,7 @@ MMCME2_BASE #(
 	.CLKOUT3   (clk_display),
 	.CLKOUT3B  (),
 	.CLKOUT4   (clk_sdram_u),
-	.CLKOUT5   (),
+	.CLKOUT5   (clk_cpu_u),
 	.CLKOUT6   (),
 	.CLKFBOUT  (clk_fb),
 	.CLKFBOUTB (),
@@ -86,5 +93,6 @@ BUFG bufg_fb    (.I(clk_fb),      .O(clk_fb_buf));
 BUFG bufg_mem   (.I(clk_mem_u),   .O(clk_mem));
 BUFG bufg_sys   (.I(clk_sys_u),   .O(clk_sys));
 BUFG bufg_sdram (.I(clk_sdram_u), .O(clk_sdram));
+BUFG bufg_cpu   (.I(clk_cpu_u),   .O(clk_cpu));
 
 endmodule

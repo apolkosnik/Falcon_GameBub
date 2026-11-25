@@ -18,6 +18,7 @@ module tb_top
 	input         clk_mem,
 	input         clk_sys,
 	input         clk_av,
+	input         clk_cpu,           // the 68060 variant's processor clock (MMCM CLKOUT5)
 	input         mmcm_locked,
 	input         reset,
 
@@ -82,8 +83,8 @@ module tb_top
 wire        sd_clk, sd_ras, sd_cas, sd_we, sd_dir;
 wire  [1:0] sd_cke, sd_cs, sd_dqm, sd_ba;
 wire [12:0] sd_a;
-wire [15:0] sd_dout, mdl_dout;
-wire        mdl_oe;
+wire [15:0] sd_dout, mdl_dout, mdl1_dout;
+wire        mdl_oe, mdl1_oe;
 wire        sr_ce, sr_we, sr_oe, sr_dir;
 wire  [1:0] sr_mask;
 wire [17:0] sr_a;
@@ -133,7 +134,7 @@ falcon_gamebub #(.DISPLAY_DIVIDER(36)) dut
 	.input_slots_1_analog_leftTrigger(8'd0), .input_slots_1_analog_rightTrigger(8'd0),
 	.sdram_clock(sd_clk), .sdram_cke(sd_cke), .sdram_cs(sd_cs), .sdram_ras(sd_ras), .sdram_cas(sd_cas),
 	.sdram_we(sd_we), .sdram_dqm(sd_dqm), .sdram_bank(sd_ba), .sdram_address(sd_a),
-	.sdram_dataIn(mdl_oe ? mdl_dout : 16'h0000), .sdram_dataOut(sd_dout), .sdram_dataDir(sd_dir),
+	.sdram_dataIn(mdl_oe ? mdl_dout : mdl1_oe ? mdl1_dout : 16'h0000), .sdram_dataOut(sd_dout), .sdram_dataDir(sd_dir),
 	.sram_ceN(sr_ce), .sram_weN(sr_we), .sram_oeN(sr_oe), .sram_writeMaskN(sr_mask),
 	.sram_address(sr_a), .sram_dataIn(sr_dout), .sram_dataOut(sr_din), .sram_dataDir(sr_dir)
 );
@@ -146,12 +147,27 @@ sdram_sim #(.T_RCD(2), .T_RP(2), .T_RAS(5), .T_RC(7), .T_RFC(7), .T_REFI(749)) s
 	.dq_out(mdl_dout), .dq_out_en(mdl_oe)
 );
 
+`ifdef FALCON_CPU060
+// the second chip: the 68060 variant's Fast RAM
+sdram_sim #(.T_RCD(2), .T_RP(2), .T_RAS(5), .T_RC(7), .T_RFC(7), .T_REFI(749)) sdram1
+(
+	.clk(sd_clk), .cke(sd_cke[1]), .cs_n(sd_cs[1]), .ras_n(sd_ras), .cas_n(sd_cas), .we_n(sd_we),
+	.ba(sd_ba), .a(sd_a), .dqm(sd_dqm), .dq_in(sd_dout), .dq_in_en(sd_dir),
+	.dq_out(mdl1_dout), .dq_out_en(mdl1_oe)
+);
+wire [31:0] mdl1_errors = sdram1.errors;
+wire        chip1_ok = 1'b1;
+`else
+assign mdl1_dout = 16'h0000, mdl1_oe = 1'b0;
+wire [31:0] mdl1_errors = 32'd0;
+wire        chip1_ok = 1'b0;   // the 68030 build never selects chip 1
+`endif
 reg [31:0] bus_errors = 32'd0;
 always @(posedge sd_clk) begin
-	if (sd_dir && mdl_oe) bus_errors <= bus_errors + 32'd1;
-	if (sd_cs[1] !== 1'b1) bus_errors <= bus_errors + 32'd1;
+	if ((sd_dir && (mdl_oe || mdl1_oe)) || (mdl_oe && mdl1_oe)) bus_errors <= bus_errors + 32'd1;
+	if (!chip1_ok && sd_cs[1] !== 1'b1) bus_errors <= bus_errors + 32'd1;
 end
-assign sd_model_errors = sdram.errors + bus_errors;
+assign sd_model_errors = sdram.errors + mdl1_errors + bus_errors;
 
 sram_sim sram
 (

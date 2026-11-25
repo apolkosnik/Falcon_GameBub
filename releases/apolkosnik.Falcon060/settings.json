@@ -1,0 +1,290 @@
+{
+	"settings": [
+		{
+			"id": 1,
+			"label": "Reset",
+			"address": "0x00001040",
+			"type": "action",
+			"value": "0x1"
+		},
+		{
+			"id": 2,
+			"label": "Monitor",
+			"address": "0x00001044",
+			"type": "list",
+			"items": [
+				{
+					"label": "VGA",
+					"value": "0x0"
+				},
+				{
+					"label": "RGB",
+					"value": "0x1"
+				},
+				{
+					"label": "TV",
+					"value": "0x2"
+				},
+				{
+					"label": "Mono (SM124)",
+					"value": "0x3"
+				}
+			],
+			"default": "0x0"
+		},
+		{
+			"id": 3,
+			"label": "ST-RAM",
+			"address": "0x00001048",
+			"type": "list",
+			"items": [
+				{
+					"label": "14 MB",
+					"value": "0x0"
+				},
+				{
+					"label": "4 MB",
+					"value": "0x1"
+				}
+			],
+			"default": "0x0"
+		},
+		{
+			"id": 4,
+			"label": "Fast RAM",
+			"address": "0x00001070",
+			"type": "list",
+			"items": [
+				{
+					"label": "Off",
+					"value": "0x0"
+				},
+				{
+					"label": "32 MB",
+					"value": "0x1"
+				}
+			],
+			"default": "0x1"
+		},
+		{
+			"id": 5,
+			"label": "X button key",
+			"address": "0x00001050",
+			"type": "list",
+			"items": [
+				{
+					"label": "Space",
+					"value": "0x2C"
+				},
+				{
+					"label": "Return",
+					"value": "0x28"
+				},
+				{
+					"label": "Esc",
+					"value": "0x29"
+				},
+				{
+					"label": "Help (F11)",
+					"value": "0x44"
+				},
+				{
+					"label": "Undo (F12)",
+					"value": "0x45"
+				},
+				{
+					"label": "Tab",
+					"value": "0x2B"
+				},
+				{
+					"label": "Alternate",
+					"value": "0xE2"
+				},
+				{
+					"label": "Control",
+					"value": "0xE0"
+				}
+			],
+			"default": "0x2C"
+		},
+		{
+			"id": 6,
+			"label": "Y button key",
+			"address": "0x00001054",
+			"type": "list",
+			"items": [
+				{
+					"label": "Space",
+					"value": "0x2C"
+				},
+				{
+					"label": "Return",
+					"value": "0x28"
+				},
+				{
+					"label": "Esc",
+					"value": "0x29"
+				},
+				{
+					"label": "Help (F11)",
+					"value": "0x44"
+				},
+				{
+					"label": "Undo (F12)",
+					"value": "0x45"
+				},
+				{
+					"label": "Tab",
+					"value": "0x2B"
+				},
+				{
+					"label": "Alternate",
+					"value": "0xE2"
+				},
+				{
+					"label": "Control",
+					"value": "0xE0"
+				}
+			],
+			"default": "0x28"
+		},
+		{
+			"id": 7,
+			"label": "Start key",
+			"address": "0x00001058",
+			"type": "list",
+			"items": [
+				{
+					"label": "Space",
+					"value": "0x2C"
+				},
+				{
+					"label": "Return",
+					"value": "0x28"
+				},
+				{
+					"label": "Esc",
+					"value": "0x29"
+				},
+				{
+					"label": "Help (F11)",
+					"value": "0x44"
+				},
+				{
+					"label": "Undo (F12)",
+					"value": "0x45"
+				},
+				{
+					"label": "Tab",
+					"value": "0x2B"
+				},
+				{
+					"label": "Alternate",
+					"value": "0xE2"
+				},
+				{
+					"label": "Control",
+					"value": "0xE0"
+				}
+			],
+			"default": "0x44"
+		},
+		{
+			"id": 8,
+			"label": "Select key",
+			"address": "0x0000105C",
+			"type": "list",
+			"items": [
+				{
+					"label": "Space",
+					"value": "0x2C"
+				},
+				{
+					"label": "Return",
+					"value": "0x28"
+				},
+				{
+					"label": "Esc",
+					"value": "0x29"
+				},
+				{
+					"label": "Help (F11)",
+					"value": "0x44"
+				},
+				{
+					"label": "Undo (F12)",
+					"value": "0x45"
+				},
+				{
+					"label": "Tab",
+					"value": "0x2B"
+				},
+				{
+					"label": "Alternate",
+					"value": "0xE2"
+				},
+				{
+					"label": "Control",
+					"value": "0xE0"
+				}
+			],
+			"default": "0x29"
+		},
+		{
+			"id": 9,
+			"label": "Mouse speed",
+			"address": "0x00001060",
+			"type": "list",
+			"items": [
+				{
+					"label": "Slow",
+					"value": "0x0"
+				},
+				{
+					"label": "Normal",
+					"value": "0x1"
+				},
+				{
+					"label": "Fast",
+					"value": "0x2"
+				},
+				{
+					"label": "Faster",
+					"value": "0x3"
+				}
+			],
+			"default": "0x1"
+		},
+		{
+			"id": 10,
+			"label": "SRAM timing",
+			"address": "0x00001064",
+			"type": "list",
+			"items": [
+				{
+					"label": "Normal",
+					"value": "0x0"
+				},
+				{
+					"label": "Safe (slower)",
+					"value": "0x1"
+				}
+			],
+			"default": "0x0"
+		},
+		{
+			"id": 11,
+			"label": "Cold reset",
+			"address": "0x00001068",
+			"type": "action",
+			"value": "0x1"
+		},
+		{
+			"id": 12,
+			"label": "Reset NVRAM",
+			"address": "0x0000106C",
+			"type": "action",
+			"value": "0x1"
+		}
+	]
+}

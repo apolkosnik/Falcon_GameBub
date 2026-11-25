@@ -13,7 +13,7 @@ diff -ru a/firmware/lightgun/src/keyboard.rs b/firmware/lightgun/src/keyboard.rs
 diff -ru a/firmware/lightgun/src/lib.rs b/firmware/lightgun/src/lib.rs
 --- a/firmware/lightgun/src/lib.rs	2026-11-24 01:30:02.039115128 -0500
 +++ b/firmware/lightgun/src/lib.rs	2026-11-24 01:30:02.077001399 -0500
-@@ -137,6 +137,16 @@
+@@ -137,6 +137,25 @@
      }
  }
  
@@ -21,10 +21,19 @@ diff -ru a/firmware/lightgun/src/lib.rs b/firmware/lightgun/src/lib.rs
 +/// at the Minimig core's registers (its `rtl/gamebub/gb_host.sv`).
 +pub const CORE_FALCON: &str = "apolkosnik.Falcon";
 +
++/// Whether a core is the Falcon core or one of its build variants (letters
++/// or digits after its ID, like "apolkosnik.Falcon060").
++pub fn is_falcon(core_id: &str) -> bool {
++    match core_id.strip_prefix(CORE_FALCON) {
++        Some(variant) => variant.bytes().all(|b| b.is_ascii_alphanumeric()),
++        None => false,
++    }
++}
++
 +/// Whether a core takes the dock's mouse and keyboard at the Minimig core's
-+/// registers: the Minimig core, its variants, and the Falcon core.
++/// registers: the Minimig core, the Falcon core, and their variants.
 +pub fn has_minimig_input(core_id: &str) -> bool {
-+    is_minimig(core_id) || core_id == CORE_FALCON
++    is_minimig(core_id) || is_falcon(core_id)
 +}
 +
  /// The light gun registers of a core, by its ID (core.json), if it takes one.

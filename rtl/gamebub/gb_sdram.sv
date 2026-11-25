@@ -3,16 +3,21 @@
 // columns, 32 MB).
 //
 // The Falcon's 16 MB guest space is the first 16 MB of the chip; DDRAM_ADDR
-// bits 20:0 are the beat (guest byte address / 8). Beat b is the four words
+// bits 20:0 are the beat (guest byte address / 8). With CHIP1 (the 68060
+// variant's Fast RAM, CT60 mode) the second chip holds guest $01000000 -
+// $02FFFFFF: a beat with DDRAM_ADDR bits 24:21 not 0 is beat
+// DDRAM_ADDR[22:0] - $200000 of chip 1; both chips are initialised and
+// refreshed together, each has its own open rows. Beat b is the four words
 // 4b..4b+3: column b[6:0]*4, bank b[8:7], row b[21:9]; word i holds the
 // beat's bytes 2i (bits 7:0) and 2i+1 (bits 15:8): DDRAM byte order, which
-// falcon_memarb makes the guest's (it swaps at its side). The second chip is
-// not used (deselected, never initialised).
+// falcon_memarb makes the guest's (it swaps at its side). Without CHIP1 the
+// second chip is not used (deselected, never initialised).
 //
 // The DDRAM side (clk_sys) is the contract falcon_memarb relies on: a
 // command (RD with BURSTCNT 1 or 4, or WE of one beat with byte enables) is
-// accepted at a clock edge where BUSY is low; BUSY is then high until the
-// command is complete (a write: in the SDRAM; a read: its last beat handed
+// accepted at a clock edge where BUSY is low (a read of 1 to 4 beats: 4
+// from falcon_memarb, 2 from the Fast RAM's line reads); BUSY is then high
+// until the command is complete (a write: in the SDRAM; a read: its last beat handed
 // over); read beats come with DOUT_READY, one per clk_sys clock at most.
 // One command at a time.
 //
@@ -40,6 +45,7 @@
 module gb_sdram
 #(
 	parameter integer CLK_HZ  = 95937500,
+	parameter bit     CHIP1   = 1'b0,     // the second chip: Fast RAM
 	parameter integer T_RCD   = 3,
 	parameter integer T_RP    = 3,
 	parameter integer T_RAS   = 5,
@@ -105,7 +111,8 @@ ODDR #(
 reg        s_req = 1'b0;          // toggles with each command
 reg        s_we;
 reg  [2:0] s_beats;               // beats - 1
-reg [20:0] s_addr;
+reg [21:0] s_addr;
+reg        s_chip;
 reg [63:0] s_wdata;
 reg  [7:0] s_be;
 reg  [1:0] s_rcnt = 2'd0;         // read beats handed over (mod 4)
@@ -124,8 +131,11 @@ always @(posedge clk_sys) begin
 	if (!s_busy) begin
 		if ((DDRAM_RD || DDRAM_WE) && !DDRAM_BUSY) begin
 			s_we    <= DDRAM_WE;
-			s_beats <= DDRAM_WE ? 3'd0 : (DDRAM_BURSTCNT[2] ? 3'd3 : 3'd0);
-			s_addr  <= DDRAM_ADDR[20:0];
+			s_beats <= (DDRAM_WE || DDRAM_BURSTCNT[2:0] == 3'd0) ? 3'd0 :
+			           (DDRAM_BURSTCNT[2:0] > 3'd4) ? 3'd3 : DDRAM_BURSTCNT[2:0] - 3'd1;
+			s_chip  <= CHIP1 && (DDRAM_ADDR[24:21] != 4'd0);
+			s_addr  <= (CHIP1 && DDRAM_ADDR[24:21] != 4'd0) ? 22'(DDRAM_ADDR[22:0] - 23'h200000)
+			                                              : {1'b0, DDRAM_ADDR[20:0]};
 			s_wdata <= DDRAM_DIN;
 			s_be    <= DDRAM_BE;
 			s_req   <= ~s_req;
@@ -165,14 +175,15 @@ assign     m_init = m_init_r;
 reg        m_seen = 1'b0;         // the last request toggle taken
 reg        c_we;
 reg  [2:0] c_last;
-reg [20:0] c_addr;
+reg [21:0] c_addr;
+reg        c_chip;
 reg [63:0] c_wdata;
 reg  [7:0] c_be;
 reg  [2:0] c_beat;                // beat being issued
 reg  [2:0] c_got;                 // beats received (reads)
 
-reg  [3:0] row_open = 4'd0;
-reg [12:0] row_of [0:3];
+reg  [7:0] row_open = 8'd0;        // {chip, bank}
+reg [12:0] row_of [0:7];
 
 localparam [3:0] S_POWER = 4'd0, S_INIT = 4'd1, S_IDLE = 4'd2, S_ACCESS = 4'd3,
                  S_WAIT = 4'd4, S_RDWAIT = 4'd5, S_REFRESH = 4'd6, S_FINISH = 4'd7;
@@ -194,13 +205,21 @@ reg  [7:0] rp_v = 8'd0;           // word arrives (shifted each clock)
 reg [47:0] racc;
 reg  [1:0] rword = 2'd0;
 
-wire [21:0] c_addr_b = {1'b0, c_addr} + {19'd0, c_beat};
+wire [21:0] c_addr_b = c_addr + {19'd0, c_beat};
 wire [1:0]  b_bank = c_addr_b[8:7];
+wire [2:0]  b_cb   = {c_chip, c_addr_b[8:7]};          // the row of this chip's bank
 wire [12:0] b_row  = c_addr_b[21:9];
 wire [8:0]  b_col  = {c_addr_b[6:0], 2'b00};
 
+// a command to the chip of the access (cs_n low), or to both chips (all)
 task cmd(input cs_n, input ras_n, input cas_n, input we_n);
-	sd_cs  <= {1'b1, cs_n};
+	sd_cs  <= cs_n ? 2'b11 : (c_chip ? 2'b01 : 2'b10);
+	sd_ras <= ras_n;
+	sd_cas <= cas_n;
+	sd_we  <= we_n;
+endtask
+task cmd_all(input ras_n, input cas_n, input we_n);
+	sd_cs  <= CHIP1 ? 2'b00 : 2'b10;
 	sd_ras <= ras_n;
 	sd_cas <= cas_n;
 	sd_we  <= we_n;
@@ -241,7 +260,7 @@ always @(posedge clk_mem) begin
 		cnt       <= POWERUP[15:0];
 		init_done <= 1'b0;
 		m_init_r  <= 1'b0;
-		row_open  <= 4'd0;
+		row_open  <= 8'd0;
 		rp_v      <= 8'd0;
 		rword     <= 2'd0;
 		sd_dqm    <= 2'b11;
@@ -258,9 +277,9 @@ always @(posedge clk_mem) begin
 		if (cnt == 16'd0) begin
 			istep <= istep + 4'd1;
 			case (istep)
-				4'd0: begin cmd(1'b0, 1'b0, 1'b1, 1'b0); sd_addr <= 13'b0_0100_0000_0000; cnt <= T_RP[15:0]; end
-				4'd1, 4'd2: begin cmd(1'b0, 1'b0, 1'b0, 1'b1); cnt <= T_RFC[15:0]; end
-				4'd3: begin cmd(1'b0, 1'b0, 1'b0, 1'b0); sd_ba <= 2'b00; sd_addr <= MODE; cnt <= T_MRD[15:0]; end
+				4'd0: begin cmd_all(1'b0, 1'b1, 1'b0); sd_addr <= 13'b0_0100_0000_0000; cnt <= T_RP[15:0]; end
+				4'd1, 4'd2: begin cmd_all(1'b0, 1'b0, 1'b1); cnt <= T_RFC[15:0]; end
+				4'd3: begin cmd_all(1'b0, 1'b0, 1'b0); sd_ba <= 2'b00; sd_addr <= MODE; cnt <= T_MRD[15:0]; end
 				default: begin
 					state     <= S_IDLE;
 					init_done <= 1'b1;
@@ -275,11 +294,11 @@ always @(posedge clk_mem) begin
 	S_IDLE:
 		if (ref_due) begin
 			// close every row (when allowed), then refresh
-			if (row_open != 4'd0) begin
+			if (row_open != 8'd0) begin
 				if (act_age >= T_RAS && wr_age >= T_WR + 3 && rd_age >= 4) begin
-					cmd(1'b0, 1'b0, 1'b1, 1'b0);
+					cmd_all(1'b0, 1'b1, 1'b0);
 					sd_addr[10] <= 1'b1;
-					row_open <= 4'd0;
+					row_open <= 8'd0;
 					cnt <= T_RP[15:0] - 16'd1;
 					state <= S_REFRESH;
 				end
@@ -294,6 +313,7 @@ always @(posedge clk_mem) begin
 			c_we    <= s_we;
 			c_last  <= s_beats;
 			c_addr  <= s_addr;
+			c_chip  <= s_chip;
 			c_wdata <= s_wdata;
 			c_be    <= s_be;
 			c_beat  <= 3'd0;
@@ -303,7 +323,7 @@ always @(posedge clk_mem) begin
 
 	S_REFRESH:
 		if (cnt == 16'd0) begin
-			cmd(1'b0, 1'b0, 1'b0, 1'b1);
+			cmd_all(1'b0, 1'b0, 1'b1);
 			ref_due <= 1'b0;
 			cnt     <= T_RFC[15:0] - 16'd1;
 			state   <= S_WAIT;
@@ -312,7 +332,7 @@ always @(posedge clk_mem) begin
 	// one beat: open its row, then READ or WRITE
 	S_ACCESS:
 		if (cnt == 16'd0) begin
-			if (row_open[b_bank] && row_of[b_bank] == b_row) begin
+			if (row_open[b_cb] && row_of[b_cb] == b_row) begin
 				if (c_we) begin
 					// no WRITE while read data may be on the bus
 					if (rd_age >= 9) begin
@@ -341,13 +361,13 @@ always @(posedge clk_mem) begin
 					end
 				end
 			end
-			else if (row_open[b_bank]) begin
+			else if (row_open[b_cb]) begin
 				// another row of the bank: PRECHARGE it
 				if (act_age >= T_RAS && wr_age >= T_WR + 3 && rd_age >= 4) begin
 					cmd(1'b0, 1'b0, 1'b1, 1'b0);
 					sd_ba       <= b_bank;
 					sd_addr[10] <= 1'b0;
-					row_open[b_bank] <= 1'b0;
+					row_open[b_cb] <= 1'b0;
 					cnt <= T_RP[15:0] - 16'd1;
 				end
 			end
@@ -355,8 +375,8 @@ always @(posedge clk_mem) begin
 				cmd(1'b0, 1'b0, 1'b1, 1'b1);
 				sd_ba   <= b_bank;
 				sd_addr <= b_row;
-				row_open[b_bank] <= 1'b1;
-				row_of[b_bank]   <= b_row;
+				row_open[b_cb] <= 1'b1;
+				row_of[b_cb]   <= b_row;
 				act_age <= 4'd0;
 				cnt     <= T_RCD[15:0] - 16'd1;
 			end

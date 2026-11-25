@@ -19,7 +19,8 @@
 //   0x0000_1038           keyboard event  |  as for the Game Bub Minimig core
 //                         (USB HID usage 7:0, bit 8 pressed)
 //   0x0000_103C           mouse wheel    /  (not used by the Falcon)
-//   0x0000_1040..107C     settings (metadata/settings.json), read / write
+//   0x0000_1040..107C     settings (metadata/settings.json), read / write;
+//                         0x1070 the 68060 variant's Fast RAM (0 off, 1 32 MB)
 //   0x2000_0000..7FFFF    TOS (files.json id 0) -> $E00000 through
 //                         falcon_system's loader (byte writes)
 //   0x2100_0000..1FFFF    cartridge (id 8, optional) -> $FA0000
@@ -96,6 +97,7 @@ module gb_host
 	output reg  [7:0] key_select,
 	output reg        sram_safe,
 	output reg  [1:0] mouse_speed,
+	output reg        set_fast_ram,   // the 68060 variant: 32 MB of Fast RAM (CT60 mode)
 
 	// mouse and keyboard from the host (firmware)
 	output reg        hmouse_valid,
@@ -144,13 +146,14 @@ localparam [2:0] STATUS_SETUP = 3'd2, STATUS_CORE_HALT = 3'd3, STATUS_CORE_RUN =
 localparam [15:0] TOS_ID = 16'd0, NVRAM_ID = 16'd7, CART_ID = 16'd8;
 
 // ------------------------------------------------------------- settings
-reg [7:0] s_monitor, s_ram, s_speed, s_safe, s_mouse;
+reg [7:0] s_monitor, s_ram, s_speed, s_safe, s_mouse, s_fast;
 always @* begin
 	set_monitor      = s_monitor[1:0];
 	set_ram4         = s_ram[0];
 	set_falcon_speed = s_speed[0];
 	sram_safe        = s_safe[0];
 	mouse_speed      = s_mouse[1:0];
+	set_fast_ram     = s_fast[0];
 end
 
 // --------------------------------------------------------- NVRAM image
@@ -236,6 +239,7 @@ function automatic [31:0] reg_read(input [15:0] a);
 		16'h1064: reg_read = {24'd0, s_safe};
 		16'h1068: reg_read = 32'd0;           // Cold reset (action)
 		16'h106C: reg_read = 32'd0;           // Reset NVRAM (action)
+		16'h1070: reg_read = {24'd0, s_fast};
 		default:  reg_read = 32'd0;
 	endcase
 endfunction
@@ -279,6 +283,7 @@ always @(posedge clk) begin
 		s_speed     <= 8'd0;
 		s_safe      <= 8'd0;
 		s_mouse     <= 8'd1;
+		s_fast      <= 8'd1;
 		key_x       <= 8'h2C;   // Space
 		key_y       <= 8'h28;   // Return
 		key_start   <= 8'h44;   // F11: Help
@@ -410,6 +415,7 @@ always @(posedge clk) begin
 							16'h1064: s_safe     <= mem_dataWrite[7:0];
 							16'h1068: if (mem_dataWrite != 32'd0) begin reset_req <= 1'b1; cold_reset <= 1'b1; end
 							16'h106C: if (mem_dataWrite != 32'd0) begin reset_req <= 1'b1; nv_init <= 1'b1; end
+							16'h1070: s_fast     <= mem_dataWrite[7:0];
 							default: ;
 						endcase
 					end

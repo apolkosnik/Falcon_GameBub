@@ -21,7 +21,9 @@
 //                               without one)
 //
 // SDRAM chip 0 (32 MB): the Falcon's 16 MB guest space (ST-RAM, TOS at
-// $E00000, the cartridge at $FA0000) in its first 16 MB. Chip 1: not used.
+// $E00000, the cartridge at $FA0000) in its first 16 MB. Chip 1: not used,
+// or in the 68060 variant (FALCON_CPU060: tools/build_variant.sh 060) the
+// 32 MB of Fast RAM at $01000000 of CT60 mode.
 // SRAM: the picture (gb_fb).
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -147,7 +149,7 @@ localparam int CLK_HZ = 31979167;
 // ===========================================================================
 // Clocks and resets
 // ===========================================================================
-wire clk_mem, clk_sys, clk_sdram, locked;
+wire clk_mem, clk_sys, clk_sdram, clk_cpu, locked;
 
 gb_clocks #(.DISPLAY_DIVIDER(DISPLAY_DIVIDER)) clocks
 (
@@ -155,6 +157,7 @@ gb_clocks #(.DISPLAY_DIVIDER(DISPLAY_DIVIDER)) clocks
 	.clk_mem      (clk_mem),
 	.clk_sys      (clk_sys),
 	.clk_sdram    (clk_sdram),
+	.clk_cpu      (clk_cpu),
 	.clk_display  (clocks_clockOutDisplay),
 	.clk_spi      (clocks_clockOutSpi),
 	.locked       (locked)
@@ -186,7 +189,7 @@ end
 // ===========================================================================
 wire        core_reset, host_cold, tos_loaded, ram_tos, disk_start, disk_ready, focus;
 wire  [1:0] set_monitor, mouse_speed;
-wire        set_ram4, set_falcon_speed, sram_safe;
+wire        set_ram4, set_falcon_speed, sram_safe, set_fast_ram;
 wire  [7:0] key_x, key_y, key_start, key_select;
 wire        hmouse_valid, hkey_valid, hkey_down;
 wire [15:0] hmouse_dx, hmouse_dy;
@@ -222,7 +225,7 @@ gb_host host
 	.disk_start(disk_start), .disk_ready(disk_ready), .focus(focus),
 	.set_monitor(set_monitor), .set_ram4(set_ram4), .set_falcon_speed(set_falcon_speed),
 	.key_x(key_x), .key_y(key_y), .key_start(key_start), .key_select(key_select),
-	.sram_safe(sram_safe), .mouse_speed(mouse_speed),
+	.sram_safe(sram_safe), .mouse_speed(mouse_speed), .set_fast_ram(set_fast_ram),
 	.hmouse_valid(hmouse_valid), .hmouse_dx(hmouse_dx), .hmouse_dy(hmouse_dy), .hmouse_btn(hmouse_btn),
 	.hkey_valid(hkey_valid), .hkey_usage(hkey_usage), .hkey_down(hkey_down),
 	.hc_cmd(hc_cmd), .hc_p1(hc_p1), .hc_p2(hc_p2), .hc_p3(hc_p3), .hc_p4(hc_p4), .hc_p5(hc_p5),
@@ -247,11 +250,13 @@ assign falcon_reset = reset_d || por || core_reset || cold_reset;
 
 reg  [1:0] m_monitor = 2'b10;
 reg        m_ram4 = 1'b0;
+reg        m_fast = 1'b0;
 always @(posedge clk_sys) if (falcon_reset) begin
 	// falcon_system's encoding: 10 VGA, 01 RGB, 11 TV, 00 mono
 	m_monitor <= (set_monitor == 2'd0) ? 2'b10 : (set_monitor == 2'd1) ? 2'b01 :
 	             (set_monitor == 2'd2) ? 2'b11 : 2'b00;
 	m_ram4    <= set_ram4;
+	m_fast    <= set_fast_ram;
 end
 
 // ===========================================================================
@@ -308,9 +313,18 @@ wire [63:0] ddr_dout, ddr_din;
 
 falcon_system #(.CLK_HZ(CLK_HZ), .TT(0)) system
 (
+`ifdef FALCON_CPU060
+	.clk(clk_sys), .clk_cpu(clk_cpu),   // the 68060 on its own clock (falcon_cpubus060 crosses)
+`else
 	.clk(clk_sys), .clk_cpu(clk_sys),
+`endif
 	.reset(falcon_reset), .cold_reset(cold_reset), .por(por),
-	.ram_mb(m_ram4 ? 4'd4 : 4'd14), .ram_tos(ram_tos), .fast_ram(2'd0),
+	.ram_mb(m_ram4 ? 4'd4 : 4'd14), .ram_tos(ram_tos),
+`ifdef FALCON_CPU060
+	.fast_ram({1'b0, m_fast}),          // CT60 mode, 32 MB (falcon_cpubus060 as imported)
+`else
+	.fast_ram(2'd0),
+`endif
 	.monitor(m_monitor), .cpu_turbo(!set_falcon_speed),
 	.tt_mode(1'b0), .ttram_sel(2'd0), .tstat_en(1'b0), .net_on(1'b0), .fpu_ok(), .vme_sel(2'd0),
 	.ld_wr(ld_wr), .ld_addr(ld_addr), .ld_data(ld_data), .ld_busy(ld_busy),
@@ -340,7 +354,11 @@ assign audio_right = audio_r;
 // ===========================================================================
 // Memory
 // ===========================================================================
+`ifdef FALCON_CPU060
+gb_sdram #(.CHIP1(1'b1)) ram     // the Fast RAM in the second chip
+`else
 gb_sdram ram
+`endif
 (
 	.clk_sys(clk_sys),
 	.DDRAM_BUSY(ddr_busy), .DDRAM_BURSTCNT(ddr_burstcnt), .DDRAM_ADDR(ddr_addr),

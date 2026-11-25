@@ -41,10 +41,15 @@ reg   [7:0] be = 8'hFF;
 wire        sd_clk, sd_ras, sd_cas, sd_we, sd_oe;
 wire  [1:0] sd_cke, sd_cs, sd_dqm, sd_ba;
 wire [12:0] sd_a;
-wire [15:0] sd_dout, mdl_dout;
-wire        mdl_oe, init_done;
+wire [15:0] sd_dout, mdl_dout, mdl1_dout;
+wire        mdl_oe, mdl1_oe, init_done;
 
-gb_sdram #(.POWERUP(2000)) dut
+`ifdef ONE_CHIP
+localparam bit C1 = 1'b0;
+`else
+localparam bit C1 = 1'b1;
+`endif
+gb_sdram #(.POWERUP(2000), .CHIP1(C1)) dut
 (
 	.clk_sys(clk_sys), .DDRAM_BUSY(busy), .DDRAM_BURSTCNT(burstcnt), .DDRAM_ADDR(addr),
 	.DDRAM_DOUT(dout), .DDRAM_DOUT_READY(rdy), .DDRAM_RD(rd), .DDRAM_DIN(din),
@@ -52,7 +57,7 @@ gb_sdram #(.POWERUP(2000)) dut
 	.clk_mem(clk_mem), .clk_sdram(clk_sdram), .reset_mem(reset_mem),
 	.sd_clk(sd_clk), .sd_cke(sd_cke), .sd_cs(sd_cs), .sd_ras(sd_ras), .sd_cas(sd_cas),
 	.sd_we(sd_we), .sd_dqm(sd_dqm), .sd_ba(sd_ba), .sd_addr(sd_a),
-	.sd_data_in(mdl_oe ? mdl_dout : 16'hZZZZ), .sd_data_out(sd_dout), .sd_data_oe(sd_oe),
+	.sd_data_in(mdl_oe ? mdl_dout : mdl1_oe ? mdl1_dout : 16'hZZZZ), .sd_data_out(sd_dout), .sd_data_oe(sd_oe),
 	.init_done(init_done), .dbg_cmds()
 );
 
@@ -65,25 +70,39 @@ sdram_sim #(.T_RCD(2), .T_RP(2), .T_RAS(5), .T_RC(7), .T_RFC(7), .T_REFI(749)) s
 	.dq_out(mdl_dout), .dq_out_en(mdl_oe)
 );
 
+// the second chip (Fast RAM)
+sdram_sim #(.T_RCD(2), .T_RP(2), .T_RAS(5), .T_RC(7), .T_RFC(7), .T_REFI(749)) sdram1
+(
+	.clk(sd_clk), .cke(sd_cke[1]), .cs_n(C1 ? sd_cs[1] : 1'b1), .ras_n(sd_ras), .cas_n(sd_cas), .we_n(sd_we),
+	.ba(sd_ba), .a(sd_a), .dqm(sd_dqm), .dq_in(sd_dout), .dq_in_en(sd_oe),
+	.dq_out(mdl1_dout), .dq_out_en(mdl1_oe)
+);
+
 integer errors = 0;
-always @(posedge sd_clk) if (sd_oe && mdl_oe) begin
+always @(posedge sd_clk) if ((sd_oe && (mdl_oe || mdl1_oe)) || (mdl_oe && mdl1_oe)) begin
 	$display("ERROR: both drive the data bus at %0t", $time);
 	errors = errors + 1;
 end
-always @(posedge sd_clk) if (sd_cs[1] !== 1'b1) begin
+always @(posedge sd_clk) if (!C1 && sd_cs[1] !== 1'b1) begin
 	$display("ERROR: chip 1 selected");
 	errors = errors + 1;
 end
 
 // shadow of the beats used: 4 banks x 3 rows x 128 beats
-reg [63:0] shadow [0:1535];
-function automatic [20:0] beat_of(input integer i);
-	integer bank, row, col;
-	bank = (i / 128) % 4;
-	row  = i / 512;
-	col  = i % 128;
-	beat_of = {row[11:0] * 12'd37 + 12'd5, bank[1:0], col[6:0]};
+reg [63:0] shadow [0:3071];
+// DDRAM address of shadowed beat i: i < 1536 in the 16 MB space (chip 0),
+// the others (with C1) Fast RAM from guest $01000000 (chip 1)
+function automatic [28:0] beat_of(input integer i);
+	integer bank, row, col, j;
+	j = i % 1536;
+	bank = (j / 128) % 4;
+	row  = j / 512;
+	col  = j % 128;
+	if (i < 1536) beat_of = 29'h6000000 | {8'd0, row[11:0] * 12'd37 + 12'd5, bank[1:0], col[6:0]};
+	else          beat_of = 29'h6000000 + 29'h200000 + {row[12:0] * 13'd613 + 13'd9, bank[1:0], col[6:0]};
 endfunction
+integer NB;
+initial NB = C1 ? 3072 : 1536;
 
 integer seed, ncmd, n, i, b, idx, nb, reads = 0, writes = 0, beats = 0;
 integer t0, waited;
@@ -92,29 +111,29 @@ reg [63:0] got, want, mask;
 initial begin
 	if (!$value$plusargs("seed=%d", seed)) seed = 1;
 	if (!$value$plusargs("cmds=%d", ncmd)) ncmd = 20000;
-	for (i = 0; i < 1536; i = i + 1) shadow[i] = 64'd0;
+	for (i = 0; i < 3072; i = i + 1) shadow[i] = 64'd0;
 	repeat (10) @(posedge clk_mem);
 	reset_mem = 1'b0;
 	@(posedge clk_sys);
 	wait (!busy);
 	// clear the shadowed beats
-	for (i = 0; i < 1536; i = i + 1) begin
+	for (i = 0; i < NB; i = i + 1) begin
 		@(posedge clk_sys);
-		addr <= {8'h06, beat_of(i)}; din <= 64'd0; be <= 8'hFF; we <= 1'b1; burstcnt <= 8'd1;
+		addr <= beat_of(i); din <= 64'd0; be <= 8'hFF; we <= 1'b1; burstcnt <= 8'd1;
 		@(posedge clk_sys);
 		while (busy) @(posedge clk_sys);
 		we <= 1'b0;
 	end
 	for (n = 0; n < ncmd; n = n + 1) begin
 		// mostly near the last address, sometimes anywhere (row misses)
-		idx = ($urandom(seed) % 4 == 0) ? $urandom % 1536 : (idx + $urandom % 8) % 1536;
+		idx = ($urandom(seed) % 4 == 0) ? $urandom % NB : (idx + $urandom % 8) % NB;
 		seed = seed + 1;
 		@(posedge clk_sys);
 		if ($urandom % 3 == 0) begin
 			// write one beat
 			din  <= {$urandom, $urandom};
 			be   <= ($urandom % 2) ? 8'hFF : $urandom;
-			addr <= {8'h06, beat_of(idx)};
+			addr <= beat_of(idx);
 			we   <= 1'b1; burstcnt <= 8'd1;
 			@(posedge clk_sys);
 			while (busy) @(posedge clk_sys);
@@ -124,9 +143,9 @@ initial begin
 			if (rdy) begin $display("ERROR: DOUT_READY on a write"); errors = errors + 1; end
 		end
 		else begin
-			nb = ($urandom % 2) ? 4 : 1;
+			nb = ($urandom % 3 == 0) ? 4 : ($urandom % 2) ? 2 : 1;
 			idx = idx & ~(nb - 1);
-			addr <= {8'h06, beat_of(idx)};
+			addr <= beat_of(idx);
 			rd <= 1'b1; burstcnt <= nb[7:0];
 			@(posedge clk_sys);
 			while (busy && !rdy) @(posedge clk_sys);
@@ -138,8 +157,7 @@ initial begin
 					waited = waited + 1;
 					if (waited > 200) begin $display("ERROR: read beat %0d never came", b); $finish; end
 				end
-				want = shadow[(idx & ~3) | ((idx + b) & 3)];
-				if (nb == 1) want = shadow[idx];
+				want = shadow[idx + b];
 				if (dout !== want) begin
 					$display("ERROR: read beat %0d of %0d at %h: %h, want %h", b, nb, beat_of(idx), dout, want);
 					errors = errors + 1;
@@ -154,9 +172,10 @@ initial begin
 	// 70 ms with nothing to do: the refresh alone (the model fails more
 	// than 8 owed)
 	repeat (70 * 31979) @(posedge clk_sys);
-	$display("gb_sdram: %0d writes, %0d reads (%0d beats), %0d errors, %0d model errors, model: %0d READ %0d WRITE",
-	         writes, reads, beats, errors, sdram.errors, sdram.reads, sdram.writes);
-	if (errors == 0 && sdram.errors == 0) $display("PASS"); else $display("FAIL");
+	$display("gb_sdram (%0d chip%s): %0d writes, %0d reads (%0d beats), %0d errors, %0d model errors, chip 0: %0d READ %0d WRITE, chip 1: %0d READ %0d WRITE",
+	         C1 ? 2 : 1, C1 ? "s" : "", writes, reads, beats, errors, sdram.errors + sdram1.errors,
+	         sdram.reads, sdram.writes, sdram1.reads, sdram1.writes);
+	if (errors == 0 && sdram.errors == 0 && sdram1.errors == 0 && (!C1 || sdram1.reads > 0)) $display("PASS"); else $display("FAIL");
 	$finish;
 end
 

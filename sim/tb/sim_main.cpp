@@ -324,6 +324,7 @@ int main(int argc, char **argv) {
 	bool pd_vsync = true, pd_locked = true, pd_resync_ready = false, pd_resync_wait = false;
 
 	double next_pc = pc_every;
+	int a_min[2] = {32767, 32767}, a_max[2] = {-32768, -32768};
 	uint64_t stop_half = (uint64_t)(run_ms * 1e-3 / (T_MEM / 2));
 	uint32_t buttons = 0;
 	std::vector<std::pair<double, uint32_t>> releases;
@@ -339,6 +340,7 @@ int main(int argc, char **argv) {
 		bool sys_rise = (ph6 == 0);
 		top->clk_mem = !(half & 1);
 		top->clk_sys = ph6 < 3;
+		top->clk_cpu = (half % 4) < 2;   // 47.97 MHz (the 68060 variant), half of clk_mem here
 		bool av_rise;
 		if (hdmi) { top->clk_av = !(half & 1); av_rise = !(half & 1); }
 		else { top->clk_av = (half % 8) < 4; av_rise = (half % 8) == 0; }
@@ -502,8 +504,15 @@ int main(int argc, char **argv) {
 		core_req_d = creq_now && serving;
 		host_step();
 
+		{
+			int16_t al = (int16_t)top->audio_left, ar = (int16_t)top->audio_right;
+			if (al < a_min[0]) a_min[0] = al; if (al > a_max[0]) a_max[0] = al;
+			if (ar < a_min[1]) a_min[1] = ar; if (ar > a_max[1]) a_max[1] = ar;
+		}
 		if (pc_every > 0 && t >= next_pc) {
 			next_pc += pc_every;
+			printf("[%9.3f ms] audio left %d..%d right %d..%d\n", t, a_min[0], a_max[0], a_min[1], a_max[1]);
+			a_min[0] = a_min[1] = 32767; a_max[0] = a_max[1] = -32768;
 			printf("[%9.3f ms] pc %08x reset %d halted %d fb %08x geom %08x reads %ld writes %ld\n", t, top->dbg_pc,
 			       top->dbg_falcon_reset, top->dbg_halted, top->dbg_fb, top->dbg_geom, n_reads, n_writes);
 			fflush(stdout);

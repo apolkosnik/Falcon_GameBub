@@ -2,6 +2,7 @@
 """Import the Falcon RTL from Falcon_MiSTer into rtl/falcon/ and rtl/ap68030/.
 
     tools/import_falcon.py <Falcon_MiSTer checkout>
+    tools/import_falcon.py --variant 060 --dest <tree> <Falcon_MiSTer checkout>
 
 The checkout must be at the commit in UPSTREAM_COMMIT (checked). The files are
 copied as the framework's build takes them:
@@ -167,18 +168,55 @@ def write(dst, lines_or_text):
         f.write(text)
 
 
+# the 68060 variant (Falcon_MiSTer's Falcon060 build: the AP68060 with its
+# FPU on falcon_cpubus060, CT60 mode's Fast RAM): its files in place of the
+# AP68030's, the core as one file (its packages first), and these edits
+FALCON_030_ONLY = ["falcon_cpubus.sv", "falcon_cpuclk.sv", "falcon_pipescan.sv", "falcon_tstat.sv", "falcon_l2.sv"]
+FALCON_060 = ["falcon_cpubus060.sv", "falcon_ddr_arb.sv"]
+AP060 = ["ap68060_pkg.sv", "gen/ap68060_upkg.sv", "ap68060_alu.sv", "ap68060_alu_slow.sv", "ap68060_muldiv.sv",
+         "ap68060_biu.sv", "ap68060_ram.sv", "ap68060_atc.sv", "ap68060_dmu.sv", "ap68060_predec.sv",
+         "ap68060_fetch.sv", "ap68060_decode.sv", "ap68060_useq.sv", "fpu/ap040_fpu.v", "ap68060_fpif.sv",
+         "ap68060_backend.sv", "ap68060_snoop.sv", "ap68060.sv",
+         "fastram/ap030_async_fifo.v", "fastram/ap030_fastram_fe.v", "fastram/ap030_fastram_be.v",
+         "fastram/ap030_l2ram.sv", "fastram/ap060_fastram_bus.sv", "fastram/ap060_fastram.sv"]
+# upstream files replaced by variants/060/rtl/<name>: memories written for
+# Quartus's inference, which Vivado built of flip-flops
+OVERRIDE_060 = ("ap68060_ram.sv", "ap030_l2ram.sv")
+EDITS_060 = [
+    ("falcon_system.sv",
+     "// Game Bub: no 68882",
+     "// Game Bub 68060 variant: the AP68060 on falcon_cpubus060 (tools/import_falcon.py --variant 060)\n"
+     "`ifndef FALCON_CPU060\n`define FALCON_CPU060\n`endif\n"
+     "// Game Bub: no 68882",
+     "the 68060 variant: FALCON_CPU060"),
+    ("falcon_cpubus060.sv",
+     "x[31:24] < ((fs == 2'd1) ? 8'h05 : (fs == 2'd2) ? 8'h09 : 8'h10);",
+     "x[31:24] < ((fs == 2'd1) ? 8'h03 : (fs == 2'd2) ? 8'h09 : 8'h10);   // Game Bub: 1 is 32 MB (the second SDRAM chip)",
+     "Fast RAM size 1 is 32 MB (the board's second SDRAM chip), not 64"),
+]
+
+
 def main():
-    if len(sys.argv) != 2:
+    args = sys.argv[1:]
+    variant, dest = None, ROOT
+    while args and args[0].startswith("--"):
+        if args[0] == "--variant" and len(args) > 1:
+            variant = args[1]; args = args[2:]
+        elif args[0] == "--dest" and len(args) > 1:
+            dest = os.path.abspath(args[1]); args = args[2:]
+        else:
+            sys.exit(__doc__)
+    if len(args) != 1 or variant not in (None, "060"):
         sys.exit(__doc__)
-    src = os.path.abspath(sys.argv[1])
+    src = os.path.abspath(args[0])
     head = git_head(src)
     if not head.startswith(UPSTREAM_COMMIT):
         sys.exit(f"{src} is at {head}, expected {UPSTREAM_COMMIT}")
     if subprocess.run(["git", "-C", src, "diff", "--quiet", "HEAD", "--", "rtl"]).returncode:
         sys.exit(f"{src}: rtl/ has local changes")
     R = os.path.join(src, "rtl")
-    out_f = os.path.join(ROOT, "rtl", "falcon")
-    out_c = os.path.join(ROOT, "rtl", "ap68030")
+    out_f = os.path.join(dest, "rtl", "falcon")
+    out_c = os.path.join(dest, "rtl", "ap68060" if variant else "ap68030")
     for d in (out_f, out_c):
         if os.path.isdir(d):
             for dp, _, fs in os.walk(d):
@@ -186,21 +224,33 @@ def main():
                     if f.endswith((".sv", ".v", ".svh", ".vh")):
                         os.remove(os.path.join(dp, f))
 
+    falcon = [f for f in FALCON if not (variant and f in FALCON_030_ONLY)] + (FALCON_060 if variant else [])
+    edits = EDITS + (EDITS_060 if variant else [])
     texts = {}
-    for f in FALCON:
+    for f in falcon:
         texts[f] = ("\n".join(inline(os.path.join(R, "falcon", f), [])) + "\n", os.path.join(out_f, f))
     for f in DSP:
         texts[f] = ("\n".join(inline(os.path.join(R, "falcon", "dsp", f), [])) + "\n", os.path.join(out_f, "dsp", f))
     for f in OTHER:
         texts[f] = ("\n".join(inline(os.path.join(R, f), [])) + "\n", os.path.join(out_f, os.path.basename(f)))
-    for f in AP030:
-        texts[f] = ("\n".join(inline(os.path.join(R, "AP68030", "rtl", f), [os.path.join(R, "AP68030", "rtl")])) + "\n",
-                    os.path.join(out_c, f))
+    if not variant:
+        for f in AP030:
+            texts[f] = ("\n".join(inline(os.path.join(R, "AP68030", "rtl", f), [os.path.join(R, "AP68030", "rtl")])) + "\n",
+                        os.path.join(out_c, f))
+        t, d = texts["falcon_pipescan.sv"]
+        texts["falcon_pipescan.sv"] = (inline_optbl(t, os.path.join(R, "falcon", "falcon_optbl.mem")), d)
+    else:
+        A = os.path.join(R, "AP68060", "rtl")
+        parts = []
+        for f in AP060:
+            # the RAM primitives: the Game Bub's versions, for Vivado's inference
+            ov = os.path.join(ROOT, "variants", "060", "rtl", os.path.basename(f))
+            srcf = ov if os.path.basename(f) in OVERRIDE_060 else os.path.join(A, f)
+            parts.append(f"// ==== {f} ({'variants/060/rtl, in place of ' if srcf == ov else ''}Falcon_MiSTer rtl/AP68060/rtl, inlined by tools/import_falcon.py) ====")
+            parts.extend(inline(srcf, [A, os.path.join(A, "fpu"), os.path.join(A, "gen")]))
+        texts["ap68060_all.sv"] = ("\n".join(parts) + "\n", os.path.join(out_c, "ap68060_all.sv"))
 
-    t, d = texts["falcon_pipescan.sv"]
-    texts["falcon_pipescan.sv"] = (inline_optbl(t, os.path.join(R, "falcon", "falcon_optbl.mem")), d)
-
-    for f, old, new, why in EDITS:
+    for f, old, new, why in edits:
         t, d = texts[f]
         n = t.count(old)
         if n != 1:
@@ -209,12 +259,28 @@ def main():
 
     for t, d in texts.values():
         write(d, t)
-    write(os.path.join(ROOT, "rtl", "falcon", "UPSTREAM.md"),
-          f"# Upstream\n\nImported by `tools/import_falcon.py` from {UPSTREAM_URL} at\n"
+    if variant:
+        # signals used (connected to an instance, assigned) before their
+        # declaration: Vivado 2018.3 may make implicit nets of them and tie
+        # what they drive to 0 (tools/decl_before_use.py); move each
+        # declaration before its first use
+        fix = os.path.join(ROOT, "tools", "decl_before_use.py")
+        # (the AP68060 only: falcon_system's are at the module's top level,
+        # where Vivado takes the declaration, Synth 8-992)
+        d = texts["ap68060_all.sv"][1]
+        subprocess.check_call([sys.executable, fix, "--fix", d, d + ".fixed"])
+        os.replace(d + ".fixed", d)
+        r = subprocess.run([sys.executable, fix, "--check", d])
+        if r.returncode:
+            sys.exit("declarations still after their use")
+    write(os.path.join(out_f, "UPSTREAM.md"),
+          f"# Upstream\n\nImported by `tools/import_falcon.py{' --variant ' + variant if variant else ''}` from {UPSTREAM_URL} at\n"
           f"commit `{head}`.\n\nEdits:\n\n" +
-          "".join(f"* `{f}`: {why}\n" for f, why in dict.fromkeys((f, why) for f, _, _, why in EDITS)) +
-          "* every `include` inlined; falcon_pipescan's opcode table inlined\n")
-    print(f"imported {len(texts)} files from {head[:8]}")
+          "".join(f"* `{f}`: {why}\n" for f, why in dict.fromkeys((f, why) for f, _, _, why in edits)) +
+          ("* every `include` inlined; the AP68060 (with its FPU and Fast RAM front end) in one file, its packages first\n* ap68060_ram.sv and fastram/ap030_l2ram.sv replaced by variants/060/rtl/ (Vivado's RAM templates)\n"
+           "* the AP68060's declarations moved before their first use (tools/decl_before_use.py --fix: Vivado 2018.3)\n"
+           if variant else "* every `include` inlined; falcon_pipescan's opcode table inlined\n"))
+    print(f"imported {len(texts)} files from {head[:8]}" + (f" (variant {variant}) into {dest}" if variant else ""))
 
 
 if __name__ == "__main__":
