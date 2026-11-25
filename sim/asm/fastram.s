@@ -1,8 +1,9 @@
-; Bare test ROM (in place of TOS) for the 68060 variant: CT60 mode's 32 MB
-; of Fast RAM at $01000000. Longs (address-derived), then words and bytes
-; over them, in the first and the last megabyte; everything read back. The
-; address after the Fast RAM must bus error. $1000: words wrong, $1004: 1 if
-; $03000000 bus errored, $FFC: $D0E0600D at the end.
+; Bare test ROM (in place of TOS) for the 68060 variant: CT60 mode's 48 MB
+; of Fast RAM at $01000000 (chip 0's upper half, then chip 1). Longs
+; (address-derived), then words and bytes over them, in 256 KB at each end
+; of both chips' parts; everything read back. The address after the Fast RAM
+; must bus error. $1000: words wrong, $1004: 1 if $04000000 bus errored,
+; $FFC: $D0E0600D at the end.
 ;   vasmm68k_mot -m68060 -Fbin -quiet -o fastram.rom fastram.s
 ; SPDX-License-Identifier: GPL-2.0-or-later
 	org	$E00000
@@ -15,10 +16,14 @@ start:	move.w	#$2700,sr
 	bsr	test
 	lea	region2,a4
 	bsr	test
+	lea	region3,a4
+	bsr	test
+	lea	region4,a4
+	bsr	test
 	; the end of the Fast RAM bus errors
 	move.l	#berr,$8.w
 	move.l	sp,a6
-	move.l	$03000000,d0
+	move.l	$04000000,d0
 	bra.s	done
 berr:	move.l	a6,sp
 	move.l	#1,$1004.w
@@ -73,5 +78,7 @@ test:	move.l	(a4),a0
 	bpl.s	.rl
 	rts
 
-region1: dc.l	$01000000,$00100000
-region2: dc.l	$02f00000,$00100000
+region1: dc.l	$01000000,$00040000
+region2: dc.l	$01fc0000,$00040000
+region3: dc.l	$02000000,$00040000
+region4: dc.l	$03fc0000,$00040000

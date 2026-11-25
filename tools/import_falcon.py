@@ -191,8 +191,8 @@ EDITS_060 = [
      "the 68060 variant: FALCON_CPU060"),
     ("falcon_cpubus060.sv",
      "x[31:24] < ((fs == 2'd1) ? 8'h05 : (fs == 2'd2) ? 8'h09 : 8'h10);",
-     "x[31:24] < ((fs == 2'd1) ? 8'h03 : (fs == 2'd2) ? 8'h09 : 8'h10);   // Game Bub: 1 is 32 MB (the second SDRAM chip)",
-     "Fast RAM size 1 is 32 MB (the board's second SDRAM chip), not 64"),
+     "x[31:24] < ((fs == 2'd1) ? 8'h03 : (fs == 2'd2) ? 8'h04 : 8'h10);   // Game Bub: 1 is 32 MB, 2 48 MB (gb_sdram)",
+     "Fast RAM sizes 1 and 2 are 32 and 48 MB (the board's SDRAM: gb_sdram), not 64 and 128"),
 ]
 
 

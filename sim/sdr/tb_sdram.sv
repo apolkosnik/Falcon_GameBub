@@ -91,7 +91,8 @@ end
 // shadow of the beats used: 4 banks x 3 rows x 128 beats
 reg [63:0] shadow [0:3071];
 // DDRAM address of shadowed beat i: i < 1536 in the 16 MB space (chip 0),
-// the others (with C1) Fast RAM from guest $01000000 (chip 1)
+// the others (with C1) Fast RAM: guest $01xxxxxx (chip 0's upper half),
+// $02xxxxxx and $03xxxxxx (chip 1)
 function automatic [28:0] beat_of(input integer i);
 	integer bank, row, col, j;
 	j = i % 1536;
@@ -99,7 +100,8 @@ function automatic [28:0] beat_of(input integer i);
 	row  = j / 512;
 	col  = j % 128;
 	if (i < 1536) beat_of = 29'h6000000 | {8'd0, row[11:0] * 12'd37 + 12'd5, bank[1:0], col[6:0]};
-	else          beat_of = 29'h6000000 + 29'h200000 + {row[12:0] * 13'd613 + 13'd9, bank[1:0], col[6:0]};
+	// Fast RAM: guest $01, $02 and $03 (chip 0's upper half, chip 1), in turn
+	else          beat_of = 29'h6000000 + 29'h200000 * (1 + (j / 128) % 3) + {8'd0, row[11:0] * 12'd613 + 12'd9, bank[1:0], col[6:0]};
 endfunction
 integer NB;
 initial NB = C1 ? 3072 : 1536;

@@ -9,12 +9,12 @@ software (CT60 TOS, MiNT, programs that use `Mxalloc`) find and use.
 | | Falcon_MiSTer (Falcon060) | Game Bub |
 |---|---|---|
 | processor clock | 50 MHz | 47.97 MHz (MMCM CLKOUT5, asynchronous to the 31.98 MHz system clock) |
-| Fast RAM | 64, 128 or 240 MB in DDR3 | 32 MB: the board's second SDRAM chip (setting **Fast RAM**: 32 MB or Off, taken at the next reset) |
+| Fast RAM | 64, 128 or 240 MB in DDR3 | 48 MB (or 32): the upper half of the first SDRAM chip and the second chip (setting **Fast RAM**: Off, 32 MB, 48 MB, taken at the next reset) |
 | FPU | the AP68060's | the same |
 | DSP | in | in |
 
 With Fast RAM on, CT60 mode is on: the first 16 MB are the Falcon's map (and its mirror at
-`$FF000000`), `$01000000-$02FFFFFF` the Fast RAM, everything else a bus error (how EmuTOS
+`$FF000000`), `$01000000-$03FFFFFF` the Fast RAM (`$01000000-$02FFFFFF` at 32 MB), everything else a bus error (how EmuTOS
 finds the size). With Fast RAM off the processor sees the Falcon's 24-bit map. The CPU
 setting of the 68030 build (Falcon 16 MHz timing) does not exist here: the 68060 always runs
 at its own speed.
@@ -36,15 +36,17 @@ What the import changes for the variant (`build/variant-060/tree/rtl/falcon/UPST
 
 - `FALCON_CPU060` in `falcon_system.sv` (the AP68060 on `falcon_cpubus060`, `falcon_ddr_arb`
   sharing the DDR3 port with the Fast RAM's cache, no 68882 bridge);
-- `falcon_cpubus060.sv`: Fast RAM size 1 is 32 MB (upstream: 64);
+- `falcon_cpubus060.sv`: Fast RAM sizes 1 and 2 are 32 and 48 MB (upstream: 64 and 128);
 - `rtl/ap68060_ram.sv` and `rtl/ap030_l2ram.sv` here replace upstream's: the memories written
   as Vivado's templates. Upstream's, written for Quartus's inference, became flip-flops in
   Vivado 2018.3 (the caches alone 120,000 LUTs, the design 165,913 of 63,400);
 - the AP68060's declarations moved before their first use (`tools/decl_before_use.py`).
 
-`gb_sdram` puts beats with DDR3 address bits 24:21 not zero (guest `$01000000` up) in the
-second chip (`CHIP1`: both chips initialised and refreshed, each with its own open rows; reads
-of 1 to 4 beats: the Fast RAM's cache reads lines as two).
+`gb_sdram` (`CHIP1`) puts the Fast RAM's first 16 MB (guest `$01000000-$01FFFFFF`) in the upper
+half of the first SDRAM chip, which the Falcon's 16 MB leave free, and the rest
+(`$02000000-$03FFFFFF`) in the second; both chips are initialised and refreshed, each with its
+own open rows; reads are of 1 to 4 beats (the Fast RAM's cache reads lines as two). 64 MB is
+not possible: the board has 64 MB of SDRAM, and the Falcon's own map needs 16 of it.
 
 ## Tests
 
@@ -52,7 +54,8 @@ of 1 to 4 beats: the Fast RAM's cache reads lines as two).
   checked against a shadow, both SDRAM models' protocol and timing checks.
 - `TREE=../build/variant-060/tree OBJ=obj_060 sim/build.sh` builds the full-system
   simulation of the variant (both SDRAM chips modelled). EmuTOS 1.4 boots with Fast RAM on:
-  `ramtop` (`$5A4`) `$03000000`, `ramvalid` `$1357BD13` (as on MiSTer with its size), the
+  `ramtop` (`$5A4`) `$04000000` (48 MB), `ramvalid` `$1357BD13` (as on MiSTer with its size), the
   screen the panel shows equal to Videl's frame, no SDRAM or SRAM model error.
-- `sim/asm/fastram.s` (a bare ROM in place of TOS): longs, words and bytes in the Fast RAM's
-  first and last megabyte read back, and `$03000000` must bus error.
+- `sim/asm/fastram.s` (a bare ROM in place of TOS): longs, words and bytes in 256 KB at each
+  end of both chips' parts of the 48 MB read back (no word wrong), and `$04000000` must bus
+  error (it does).

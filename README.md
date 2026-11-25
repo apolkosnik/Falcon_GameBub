@@ -21,8 +21,8 @@ timing.
 ## The 68060 variant
 
 `releases/apolkosnik.Falcon060/` is the same Falcon with the AP68060 (68060 with its caches,
-MMU and FPU, at 47.97 MHz) and CT60 mode's Fast RAM: 32 MB at `$01000000` in the board's second
-SDRAM chip, as Falcon_MiSTer's Falcon060 build (which has 64 to 240 MB). For CT60 TOS, MiNT and
+MMU and FPU, at 47.97 MHz) and CT60 mode's Fast RAM: 48 MB at `$01000000` (the first SDRAM chip's free
+half and the second chip), as Falcon_MiSTer's Falcon060 build (which has 64 to 240 MB). For CT60 TOS, MiNT and
 Fast RAM-aware software. See [variants/060/README.md](variants/060/README.md); it is built with
 `tools/build_variant.sh 060`.
 

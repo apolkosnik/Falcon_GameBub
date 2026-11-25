@@ -4,10 +4,11 @@
 //
 // The Falcon's 16 MB guest space is the first 16 MB of the chip; DDRAM_ADDR
 // bits 20:0 are the beat (guest byte address / 8). With CHIP1 (the 68060
-// variant's Fast RAM, CT60 mode) the second chip holds guest $01000000 -
-// $02FFFFFF: a beat with DDRAM_ADDR bits 24:21 not 0 is beat
-// DDRAM_ADDR[22:0] - $200000 of chip 1; both chips are initialised and
-// refreshed together, each has its own open rows. Beat b is the four words
+// variant's Fast RAM, CT60 mode, up to 48 MB at $01000000; DDRAM_ADDR bits
+// 24:21 are guest address bits 27:24): guest $01000000 - $01FFFFFF is the
+// upper half of the first chip, $02000000 - $03FFFFFF the second chip.
+// Both chips are initialised and refreshed together, each has its own open
+// rows. Beat b is the four words
 // 4b..4b+3: column b[6:0]*4, bank b[8:7], row b[21:9]; word i holds the
 // beat's bytes 2i (bits 7:0) and 2i+1 (bits 15:8): DDRAM byte order, which
 // falcon_memarb makes the guest's (it swaps at its side). Without CHIP1 the
@@ -133,9 +134,10 @@ always @(posedge clk_sys) begin
 			s_we    <= DDRAM_WE;
 			s_beats <= (DDRAM_WE || DDRAM_BURSTCNT[2:0] == 3'd0) ? 3'd0 :
 			           (DDRAM_BURSTCNT[2:0] > 3'd4) ? 3'd3 : DDRAM_BURSTCNT[2:0] - 3'd1;
-			s_chip  <= CHIP1 && (DDRAM_ADDR[24:21] != 4'd0);
-			s_addr  <= (CHIP1 && DDRAM_ADDR[24:21] != 4'd0) ? 22'(DDRAM_ADDR[22:0] - 23'h200000)
-			                                              : {1'b0, DDRAM_ADDR[20:0]};
+			// guest 27:24: 0 the Falcon's space, 1 chip 0's upper half, 2 and 3 chip 1
+			s_chip  <= CHIP1 && DDRAM_ADDR[24:22] != 3'd0;
+			s_addr  <= !CHIP1 ? {1'b0, DDRAM_ADDR[20:0]} :
+			           (DDRAM_ADDR[24:22] != 3'd0) ? DDRAM_ADDR[21:0] : {DDRAM_ADDR[21], DDRAM_ADDR[20:0]};
 			s_wdata <= DDRAM_DIN;
 			s_be    <= DDRAM_BE;
 			s_req   <= ~s_req;

@@ -20,7 +20,7 @@
 //                         (USB HID usage 7:0, bit 8 pressed)
 //   0x0000_103C           mouse wheel    /  (not used by the Falcon)
 //   0x0000_1040..107C     settings (metadata/settings.json), read / write;
-//                         0x1070 the 68060 variant's Fast RAM (0 off, 1 32 MB)
+//                         0x1070 the 68060 variant's Fast RAM (0 off, 1 32 MB, 2 48 MB)
 //   0x2000_0000..7FFFF    TOS (files.json id 0) -> $E00000 through
 //                         falcon_system's loader (byte writes)
 //   0x2100_0000..1FFFF    cartridge (id 8, optional) -> $FA0000
@@ -97,7 +97,7 @@ module gb_host
 	output reg  [7:0] key_select,
 	output reg        sram_safe,
 	output reg  [1:0] mouse_speed,
-	output reg        set_fast_ram,   // the 68060 variant: 32 MB of Fast RAM (CT60 mode)
+	output reg  [1:0] set_fast_ram,   // the 68060 variant's Fast RAM (CT60 mode): 0 off, 1 32 MB, 2 48 MB
 
 	// mouse and keyboard from the host (firmware)
 	output reg        hmouse_valid,
@@ -153,7 +153,7 @@ always @* begin
 	set_falcon_speed = s_speed[0];
 	sram_safe        = s_safe[0];
 	mouse_speed      = s_mouse[1:0];
-	set_fast_ram     = s_fast[0];
+	set_fast_ram     = (s_fast[1:0] == 2'd3) ? 2'd2 : s_fast[1:0];
 end
 
 // --------------------------------------------------------- NVRAM image
@@ -283,7 +283,7 @@ always @(posedge clk) begin
 		s_speed     <= 8'd0;
 		s_safe      <= 8'd0;
 		s_mouse     <= 8'd1;
-		s_fast      <= 8'd1;
+		s_fast      <= 8'd2;
 		key_x       <= 8'h2C;   // Space
 		key_y       <= 8'h28;   // Return
 		key_start   <= 8'h44;   // F11: Help

@@ -62,9 +62,13 @@
 				{
 					"label": "32 MB",
 					"value": "0x1"
+				},
+				{
+					"label": "48 MB",
+					"value": "0x2"
 				}
 			],
-			"default": "0x1"
+			"default": "0x2"
 		},
 		{
 			"id": 5,

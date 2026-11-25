@@ -23,7 +23,8 @@
 // SDRAM chip 0 (32 MB): the Falcon's 16 MB guest space (ST-RAM, TOS at
 // $E00000, the cartridge at $FA0000) in its first 16 MB. Chip 1: not used,
 // or in the 68060 variant (FALCON_CPU060: tools/build_variant.sh 060) the
-// 32 MB of Fast RAM at $01000000 of CT60 mode.
+// Fast RAM of CT60 mode, up to 48 MB at $01000000: its first 16 MB in the
+// upper half of chip 0, the rest in chip 1 (gb_sdram).
 // SRAM: the picture (gb_fb).
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -189,7 +190,8 @@ end
 // ===========================================================================
 wire        core_reset, host_cold, tos_loaded, ram_tos, disk_start, disk_ready, focus;
 wire  [1:0] set_monitor, mouse_speed;
-wire        set_ram4, set_falcon_speed, sram_safe, set_fast_ram;
+wire        set_ram4, set_falcon_speed, sram_safe;
+wire  [1:0] set_fast_ram;
 wire  [7:0] key_x, key_y, key_start, key_select;
 wire        hmouse_valid, hkey_valid, hkey_down;
 wire [15:0] hmouse_dx, hmouse_dy;
@@ -250,7 +252,7 @@ assign falcon_reset = reset_d || por || core_reset || cold_reset;
 
 reg  [1:0] m_monitor = 2'b10;
 reg        m_ram4 = 1'b0;
-reg        m_fast = 1'b0;
+reg  [1:0] m_fast = 2'd0;
 always @(posedge clk_sys) if (falcon_reset) begin
 	// falcon_system's encoding: 10 VGA, 01 RGB, 11 TV, 00 mono
 	m_monitor <= (set_monitor == 2'd0) ? 2'b10 : (set_monitor == 2'd1) ? 2'b01 :
@@ -321,7 +323,7 @@ falcon_system #(.CLK_HZ(CLK_HZ), .TT(0)) system
 	.reset(falcon_reset), .cold_reset(cold_reset), .por(por),
 	.ram_mb(m_ram4 ? 4'd4 : 4'd14), .ram_tos(ram_tos),
 `ifdef FALCON_CPU060
-	.fast_ram({1'b0, m_fast}),          // CT60 mode, 32 MB (falcon_cpubus060 as imported)
+	.fast_ram(m_fast),                  // CT60 mode: 1 32 MB, 2 48 MB (falcon_cpubus060 as imported)
 `else
 	.fast_ram(2'd0),
 `endif
