@@ -44,6 +44,8 @@ module tb_top
 	input  [11:0] buttons1,
 	// sticks {slot 0 right Y, right X, left Y, left X}
 	input  [31:0] sticks,
+	// slot 1's left stick {Y, X}
+	input  [15:0] sticks1,
 
 	// the framework's side of the picture
 	output        video_de,
@@ -129,7 +131,7 @@ falcon_gamebub #(.DISPLAY_DIVIDER(36)) dut
 	.input_slots_1_buttons_l2(1'b0), .input_slots_1_buttons_r2(1'b0),
 	.input_slots_1_buttons_l3(1'b0), .input_slots_1_buttons_r3(1'b0),
 	.input_slots_1_buttons_start(buttons1[10]), .input_slots_1_buttons_select(buttons1[11]),
-	.input_slots_1_analog_leftX(8'sd0), .input_slots_1_analog_leftY(8'sd0),
+	.input_slots_1_analog_leftX(sticks1[7:0]), .input_slots_1_analog_leftY(sticks1[15:8]),
 	.input_slots_1_analog_rightX(8'sd0), .input_slots_1_analog_rightY(8'sd0),
 	.input_slots_1_analog_leftTrigger(8'd0), .input_slots_1_analog_rightTrigger(8'd0),
 	.sdram_clock(sd_clk), .sdram_cke(sd_cke), .sdram_cs(sd_cs), .sdram_ras(sd_ras), .sdram_cas(sd_cas),

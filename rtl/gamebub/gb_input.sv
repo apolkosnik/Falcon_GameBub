@@ -1,6 +1,8 @@
 // Game Bub Falcon: Game Bub controllers, and the dock's mouse and keyboard
 // (written by the firmware fork, gb_host), as MiSTer's hps_io gives them to
-// falcon_system: joysticks (MiSTer bit order), PS/2 mouse packets and PS/2
+// falcon_system: joysticks (MiSTer bit order: 0 right 1 left 2 down 3 up
+// 4 A 5 B 6 C 7 Pause 8 Option), the left sticks as the paddles (MiSTer's
+// joystick_l_analog: [7:0] X, [15:8] Y, signed), PS/2 mouse packets and PS/2
 // set 2 key events, which falcon_ikbd turns into the IKBD's.
 //
 // Slot 0 (the handheld's buttons, or the first dock controller):
@@ -13,8 +15,14 @@
 //                      right buttons (the joystick is let go)
 //   X, Y, Start,       keys (USB HID usages from the settings; defaults
 //   Select             Space, Return, Help (F11), Esc)
+//   Start, Select      also the Jagpad's Pause and Option (enhanced port A)
+//   left stick         also the paddles of enhanced port A ($FF9210/2)
 // Slot 1 (a second dock controller): D-pad, left stick and A the joystick
-//   in ST port 0 (the mouse port; the IKBD takes it when the program asks).
+//   in ST port 0 (the mouse port; the IKBD takes it when the program asks),
+//   and with B, X, Start, Select the Jagpad of enhanced port B as Falcon_MiSTer
+//   maps a pad (its "jn" defaults: A fire/A, B B, X C, Start Pause, Select
+//   Option; B and X are also the IKBD's button 2 (Space) and 3 (autofire),
+//   as there); its left stick the paddles of enhanced port B ($FF9214/6).
 // Host mouse: moves the mouse, its buttons are the mouse's.
 // Host keyboard: every key, translated from its USB HID usage to PS/2 set 2
 //   (and by falcon_ikbd's keymap to the ST's: F11 Help, F12 Undo, Page Up /
@@ -42,7 +50,7 @@ module gb_input
 	input signed [7:0] stick_rx, stick_ry,
 
 	input             p1_active,
-	input             p1_a,
+	input             p1_a, p1_b, p1_x, p1_start, p1_select,
 	input             p1_up, p1_down, p1_left, p1_right,
 	input signed [7:0] p1_lx, p1_ly,
 
@@ -62,6 +70,8 @@ module gb_input
 
 	output     [31:0] joy0,          // ST port 1
 	output     [31:0] joy1,          // ST port 0
+	output     [15:0] ana0,          // enhanced port A's paddles: slot 0's left stick
+	output     [15:0] ana1,          // enhanced port B's paddles: slot 1's left stick
 	output reg [24:0] ps2_mouse = 25'd0,
 	output reg [10:0] ps2_key = 11'd0
 );
@@ -82,10 +92,15 @@ wire s1_down  = p1_active & (p1_down  | (p1_ly >  STICK_ON));
 wire s1_left  = p1_active & (p1_left  | (p1_lx < -STICK_ON));
 wire s1_right = p1_active & (p1_right | (p1_lx >  STICK_ON));
 
-// bits: 0 right, 1 left, 2 down, 3 up, 4 fire
+// bits: 0 right, 1 left, 2 down, 3 up, 4 fire / A, 5 B, 6 C, 7 Pause, 8 Option
+// (slot 0's B and X are the mouse's right button and a key: not B and C)
 assign joy0 = mouse_mode ? 32'd0 :
-              {27'd0, btn_a, s0_up & ~s0_down, s0_down & ~s0_up, s0_left & ~s0_right, s0_right & ~s0_left};
-assign joy1 = {27'd0, p1_active & p1_a, s1_up & ~s1_down, s1_down & ~s1_up, s1_left & ~s1_right, s1_right & ~s1_left};
+              {23'd0, btn_select, btn_start, 2'b00,
+               btn_a, s0_up & ~s0_down, s0_down & ~s0_up, s0_left & ~s0_right, s0_right & ~s0_left};
+assign joy1 = {23'd0, p1_active & p1_select, p1_active & p1_start, p1_active & p1_x, p1_active & p1_b,
+               p1_active & p1_a, s1_up & ~s1_down, s1_down & ~s1_up, s1_left & ~s1_right, s1_right & ~s1_left};
+assign ana0 = {stick_ly, stick_lx};
+assign ana1 = p1_active ? {p1_ly, p1_lx} : 16'd0;
 
 wire m_left  = (mouse_mode & btn_a) | btn_r | hmouse_btn[0];
 wire m_right = btn_b | hmouse_btn[1];

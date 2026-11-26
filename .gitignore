@@ -1,6 +1,7 @@
 /out
 /build
 /sim/obj_dir*
+/sim/obj_*
 /sim/out*
 /sim/media
 /sim/*.log

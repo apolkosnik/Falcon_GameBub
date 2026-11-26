@@ -52,7 +52,9 @@ straight away. The NVRAM is kept in `falcon.nvram` (the 50 bytes MiSTer's and Ha
 | B | right mouse button |
 | L (held) | the D-pad moves the mouse, A and B are its buttons |
 | X, Y, Start, Select | keys chosen in the settings (default Space, Return, Help, Esc) |
-| second dock controller | joystick in port 0 (the mouse port) |
+| Start, Select | also the Jagpad's Pause and Option on enhanced port A |
+| left stick | also the paddles of enhanced port A |
+| second dock controller | joystick in port 0 (the mouse port), and the Jagpad of enhanced port B as Falcon_MiSTer maps a pad: A fire / A, B button B (and Space), X button C (and autofire), Start Pause, Select Option; its left stick the paddles of enhanced port B |
 | USB keyboard / mouse on the dock | the Falcon's keyboard and mouse: needs the firmware fork and [firmware/](firmware/README.md) |
 
 ### Settings

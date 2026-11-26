@@ -45,6 +45,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "Vtb_top.h"
+#include "Vtb_top___024root.h"
 #include "verilated.h"
 #include "svdpi.h"
 #include <cstdio>
@@ -167,6 +168,22 @@ static uint32_t creq[6];
 static bool serving = false;
 static long n_reads = 0, n_writes = 0;
 static bool verbose_io = false;
+static bool dsp_state = false;
+static bool rtc_trace = false;
+// --pad0 / --pad1 BUTTONS:LX:LY: a controller held so for the whole run
+// (BUTTONS in tb_top's order, hex: 0 a 1 b 2 x 3 y 4 up 5 down 6 left 7 right
+// 8 l1 9 r1 10 start 11 select; LX, LY the left stick, -128..127); --pad1
+// makes slot 1 active, --pad1-idle holds its buttons with the slot inactive
+static uint32_t pad_btn[2] = {0, 0};
+static int pad_lx[2] = {0, 0}, pad_ly[2] = {0, 0};
+static bool slot1 = false;      // --rtc-trace: every CPU access to the MC146818 ($FF8961/3)
+// --audio-ramp FROM_MS:STEP (sim/asm/dspsnd.s): from FROM_MS on, the codec's
+// output must be the DSP's sawtooth: every sample the left channel STEP*2
+// (two slots a frame) on from the last, the right channel STEP on from the
+// left, both modulo 65536, give or take the one the attenuation's
+// (x * 65535) >> 16 takes from a positive value; and 49170 samples a second
+static double ramp_from = -1; static int ramp_step = 0;
+static long ramp_n = 0, ramp_bad = 0, ramp_lr_bad = 0;   // --dsp-state: the DSP SSI and crossbar registers with --pc-every
 static void serve() {
 	uint32_t c = creq[0], id = creq[1], buf = creq[2];
 	uint64_t off = (uint64_t)creq[4] << 32 | creq[3];
@@ -271,6 +288,14 @@ int main(int argc, char **argv) {
 		else if (a == "--write-back") write_back = true;
 		else if (a == "--check-screen") check_screen = true;
 		else if (a == "--verbose-io") verbose_io = true;
+		else if (a == "--dsp-state") dsp_state = true;
+		else if (a == "--rtc-trace") rtc_trace = true;
+		else if ((a == "--pad0" || a == "--pad1" || a == "--pad1-idle") && more) {
+			int k = a == "--pad0" ? 0 : 1;
+			if (sscanf(argv[++i], "%x:%d:%d", &pad_btn[k], &pad_lx[k], &pad_ly[k]) < 1) { fprintf(stderr, "%s BUTTONS:LX:LY\n", a.c_str()); return 1; }
+			if (a == "--pad1") slot1 = true;
+		}
+		else if (a == "--audio-ramp" && more) sscanf(argv[++i], "%lf:%d", &ramp_from, &ramp_step);
 		else if (a[0] == '+') ;
 		else { fprintf(stderr, "unknown option %s\n", a.c_str()); return 1; }
 	}
@@ -346,6 +371,25 @@ int main(int argc, char **argv) {
 		else { top->clk_av = (half % 8) < 4; av_rise = (half % 8) == 0; }
 		if (half < 600) top->reset = 1; else top->reset = 0;
 		top->eval();
+
+		if (rtc_trace && sys_rise) {
+			// after a clk_sys edge: the bus cycle of this clock (latched at the next edge)
+			auto *r = top->rootp;
+			static bool img_d = false;
+			static long n_tr = 0;
+			double ms = now_ms();
+			bool img = r->tb_top__DOT__dut__DOT__system__DOT__nvram__DOT__img_done;
+			if (img != img_d) printf("[%9.3f ms] rtc: default image %s\n", ms, img ? "done" : "cleared");
+			img_d = img;
+			unsigned idx = r->tb_top__DOT__dut__DOT__system__DOT__nvram__DOT__index;
+			unsigned din = r->tb_top__DOT__dut__DOT__system__DOT__dev_din & 0xff;
+			unsigned dout = r->tb_top__DOT__dut__DOT__system__DOT__dev_dout & 0xff;
+			if (n_tr < 4000) {
+				if (r->tb_top__DOT__dut__DOT__system__DOT__nvram__DOT__wr_index) { printf("[%9.3f ms] rtc: index <- %02x\n", ms, din); n_tr++; }
+				if (r->tb_top__DOT__dut__DOT__system__DOT__nvram__DOT__wr_data) { printf("[%9.3f ms] rtc: [%02x] <- %02x\n", ms, idx, din); n_tr++; }
+				if (r->tb_top__DOT__dut__DOT__system__DOT__nvram__DOT__rd_data) { printf("[%9.3f ms] rtc: [%02x] -> %02x\n", ms, idx, dout); n_tr++; }
+			}
+		}
 
 		if (av_rise) {
 			// what the core took 12 clocks ago (a name is set after an edge
@@ -485,7 +529,11 @@ int main(int argc, char **argv) {
 		}
 		for (auto &e : later) evs.push_back(e);
 		for (auto &rl : releases) if (rl.first >= 0 && t >= rl.first) { buttons &= ~rl.second; rl.first = -1; }
-		top->buttons = buttons;
+		top->buttons = buttons | pad_btn[0];
+		top->buttons1 = pad_btn[1];
+		top->slot1_active = slot1;
+		top->sticks = (top->sticks & 0xFFFF0000u) | (uint32_t)(uint8_t)pad_ly[0] << 8 | (uint8_t)pad_lx[0];
+		top->sticks1 = (uint32_t)(uint8_t)pad_ly[1] << 8 | (uint8_t)pad_lx[1];
 
 		// ---- the host
 		bool creq_now = top->host_core_request;
@@ -508,11 +556,48 @@ int main(int argc, char **argv) {
 			int16_t al = (int16_t)top->audio_left, ar = (int16_t)top->audio_right;
 			if (al < a_min[0]) a_min[0] = al; if (al > a_max[0]) a_max[0] = al;
 			if (ar < a_min[1]) a_min[1] = ar; if (ar > a_max[1]) a_max[1] = ar;
+			static int16_t pl = 0, pr = 0; static bool have = false;
+			if (ramp_from >= 0 && t >= ramp_from && (al != pl || ar != pr || !have)) {
+				if (have) {
+					int16_t d = (int16_t)(uint16_t)(al - pl), lr = (int16_t)(uint16_t)(ar - al);
+					ramp_n++;
+					if (d < 2 * ramp_step - 1 || d > 2 * ramp_step + 1) {
+						if (ramp_bad < 10) printf("[%9.3f ms] audio ramp: left %d after %d\n", t, al, pl);
+						ramp_bad++;
+					}
+					if (lr < ramp_step - 1 || lr > ramp_step + 1) {
+						if (ramp_lr_bad < 10) printf("[%9.3f ms] audio ramp: right %d with left %d\n", t, ar, al);
+						ramp_lr_bad++;
+					}
+				}
+				have = true;
+			}
+			pl = al; pr = ar;
 		}
 		if (pc_every > 0 && t >= next_pc) {
 			next_pc += pc_every;
 			printf("[%9.3f ms] audio left %d..%d right %d..%d\n", t, a_min[0], a_max[0], a_min[1], a_max[1]);
 			a_min[0] = a_min[1] = 32767; a_max[0] = a_max[1] = -32768;
+			if (dsp_state) {
+				auto *r = top->rootp;
+				printf("[%9.3f ms] dsp pc %04x x0 %06x a %02x:%06x:%06x\n", t,
+				       (unsigned)r->tb_top__DOT__dut__DOT__system__DOT__dsp__DOT__u_core__DOT__pc,
+				       (unsigned)r->tb_top__DOT__dut__DOT__system__DOT__dsp__DOT__u_core__DOT__x0,
+				       (unsigned)r->tb_top__DOT__dut__DOT__system__DOT__dsp__DOT__u_core__DOT__a2,
+				       (unsigned)r->tb_top__DOT__dut__DOT__system__DOT__dsp__DOT__u_core__DOT__a1,
+				       (unsigned)r->tb_top__DOT__dut__DOT__system__DOT__dsp__DOT__u_core__DOT__a0);
+				printf("[%9.3f ms] dsp cra %06x crb %06x ssisr %02x tx %06x wait_tx %d; xbar src %04x dst %04x 8935 %02x 8937 %02x att %04x\n", t,
+				       (unsigned)r->tb_top__DOT__dut__DOT__system__DOT__dsp__DOT__u_periph__DOT__cra,
+				       (unsigned)r->tb_top__DOT__dut__DOT__system__DOT__dsp__DOT__u_periph__DOT__crb,
+				       (unsigned)r->tb_top__DOT__dut__DOT__system__DOT__dsp__DOT__u_periph__DOT__ssisr,
+				       (unsigned)r->tb_top__DOT__dut__DOT__system__DOT__dsp__DOT__u_periph__DOT__ssi_tx,
+				       (int)r->tb_top__DOT__dut__DOT__system__DOT__dsp__DOT__u_periph__DOT__wait_tx,
+				       (unsigned)r->tb_top__DOT__dut__DOT__system__DOT__crossbar__DOT__r_src,
+				       (unsigned)r->tb_top__DOT__dut__DOT__system__DOT__crossbar__DOT__r_dst,
+				       (unsigned)r->tb_top__DOT__dut__DOT__system__DOT__crossbar__DOT__r_8935,
+				       (unsigned)r->tb_top__DOT__dut__DOT__system__DOT__crossbar__DOT__r_8937,
+				       (unsigned)r->tb_top__DOT__dut__DOT__system__DOT__crossbar__DOT__r_att);
+			}
 			printf("[%9.3f ms] pc %08x reset %d halted %d fb %08x geom %08x reads %ld writes %ld\n", t, top->dbg_pc,
 			       top->dbg_falcon_reset, top->dbg_halted, top->dbg_fb, top->dbg_geom, n_reads, n_writes);
 			fflush(stdout);
@@ -572,6 +657,13 @@ int main(int argc, char **argv) {
 	       "SDRAM errors %u, SRAM errors %u, fb %08x, geometry %08x\n",
 	       now_ms(), top->dbg_pc, vframe, scr_n, last_screen_sum, n_reads, n_writes,
 	       top->sd_model_errors, top->sram_errors, top->dbg_fb, top->dbg_geom);
+	if (ramp_from >= 0) {
+		long want = (long)((now_ms() - ramp_from) * 49.170);
+		bool ok = ramp_bad == 0 && ramp_lr_bad == 0 && ramp_n >= want - 2 && ramp_n <= want + 2;
+		printf("audio ramp: %ld samples (%ld expected at 49170 Hz), %ld steps wrong, %ld right channels wrong: %s\n",
+		       ramp_n, want, ramp_bad, ramp_lr_bad, ok ? "ok" : "FAIL");
+		if (!ok) errs++;
+	}
 	if (expect_screen >= 0 && (uint32_t)expect_screen != last_screen_sum) { printf("FAIL: screen %08x, expected %08lx\n", last_screen_sum, expect_screen); errs++; }
 	printf(errs ? "FAIL\n" : "PASS\n");
 	top->final();

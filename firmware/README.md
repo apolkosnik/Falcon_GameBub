@@ -18,6 +18,19 @@ git -C gamebub checkout f1b9bec4
 git -C gamebub apply ../Falcon_GameBub/firmware/0001-dock-keyboard-and-mouse-for-the-Falcon-core.patch
 ```
 
+The patch adds host tests (`cargo test` in `firmware/lightgun`: the Falcon IDs and their
+variants take the keyboard at 0x1038 and the mouse at 0x1030 / 0x1034, nothing else does).
+Building the firmware and the UF2 (the program image at 1 MB, the system data partition
+taken unchanged from the UF2 of the same commit, `gamebub-handheld-rev4-1.1.0-beta5-minimig-f1b9bec4.uf2`):
+
+```
+cd gamebub/firmware/lightgun && cargo test
+cd ../handheld && . ~/export-esp.sh && cargo build --release --features=rev4
+espflash save-image --chip esp32s3 target/xtensa-esp32s3-espidf/release/handheld app.bin
+```
+
+(`espflash save-image` from `firmware/handheld`, so that its `espflash.toml` gives the
+8 MB / 80 MHz header and the 5 MB partition.)
+
 Without it the core works with the handheld's buttons alone (the D-pad / sticks as the
-joystick and the mouse, and four buttons as keys; see the README). The patched firmware has
-not been built or run here.
+joystick and the mouse, and four buttons as keys; see the README).

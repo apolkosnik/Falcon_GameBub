@@ -1,7 +1,8 @@
-diff -ru a/firmware/lightgun/src/keyboard.rs b/firmware/lightgun/src/keyboard.rs
---- a/firmware/lightgun/src/keyboard.rs	2026-11-24 01:30:02.041115153 -0500
-+++ b/firmware/lightgun/src/keyboard.rs	2026-11-24 01:30:02.077036609 -0500
-@@ -121,7 +121,7 @@
+diff --git a/firmware/lightgun/src/keyboard.rs b/firmware/lightgun/src/keyboard.rs
+index 57ef4156..fb5391f5 100644
+--- a/firmware/lightgun/src/keyboard.rs
++++ b/firmware/lightgun/src/keyboard.rs
+@@ -121,7 +121,7 @@ pub const TARGET_MINIMIG: Target = Target { event: 0x0000_1038 };
  /// The keyboard register of a core, by its ID (core.json), if it takes one.
  pub fn target_for_core(core_id: &str) -> Option<Target> {
      match core_id {
@@ -10,10 +11,27 @@ diff -ru a/firmware/lightgun/src/keyboard.rs b/firmware/lightgun/src/keyboard.rs
          _ => None,
      }
  }
-diff -ru a/firmware/lightgun/src/lib.rs b/firmware/lightgun/src/lib.rs
---- a/firmware/lightgun/src/lib.rs	2026-11-24 01:30:02.039115128 -0500
-+++ b/firmware/lightgun/src/lib.rs	2026-11-24 01:30:02.077001399 -0500
-@@ -137,6 +137,25 @@
+@@ -272,6 +272,15 @@ mod tests {
+         assert_eq!(target_for_core(""), None);
+     }
+ 
++    #[test]
++    fn the_falcon_core_takes_the_keyboard() {
++        // apolkosnik/Falcon_GameBub's gb_host.sv: key events at 0x1038
++        assert_eq!(target_for_core("apolkosnik.Falcon"), Some(TARGET_MINIMIG));
++        assert_eq!(target_for_core("apolkosnik.Falcon060"), Some(TARGET_MINIMIG));
++        assert_eq!(target_for_core("apolkosnik.falcon"), None);
++        assert_eq!(target_for_core("apolkosnik.3DO"), None);
++    }
++
+     #[test]
+     fn a_variant_of_the_minimig_core_takes_the_keyboard() {
+         // the 68040 build (variants/ap68040 there): the same register
+diff --git a/firmware/lightgun/src/lib.rs b/firmware/lightgun/src/lib.rs
+index 22586640..5e75c050 100644
+--- a/firmware/lightgun/src/lib.rs
++++ b/firmware/lightgun/src/lib.rs
+@@ -137,6 +137,25 @@ pub fn is_minimig(core_id: &str) -> bool {
      }
  }
  
@@ -39,10 +57,41 @@ diff -ru a/firmware/lightgun/src/lib.rs b/firmware/lightgun/src/lib.rs
  /// The light gun registers of a core, by its ID (core.json), if it takes one.
  pub fn target_for_core(core_id: &str) -> Option<Target> {
      match core_id {
-diff -ru a/firmware/lightgun/src/mouse.rs b/firmware/lightgun/src/mouse.rs
---- a/firmware/lightgun/src/mouse.rs	2026-11-24 01:30:02.043115177 -0500
-+++ b/firmware/lightgun/src/mouse.rs	2026-11-24 01:30:02.077100840 -0500
-@@ -281,7 +281,7 @@
+@@ -662,6 +681,29 @@ mod tests {
+         assert_eq!(target_for_core(""), None);
+     }
+ 
++    #[test]
++    fn falcon_core_and_its_variants() {
++        assert!(is_falcon("apolkosnik.Falcon"));
++        assert!(is_falcon("apolkosnik.Falcon060"));
++        assert!(!is_falcon("apolkosnik.falcon"));
++        assert!(!is_falcon("apolkosnik.Falco"));
++        assert!(!is_falcon("apolkosnik.Falcon.060"));
++        assert!(!is_falcon("apolkosnik.Falcon_060"));
++        assert!(!is_falcon("other.Falcon"));
++        assert!(!is_falcon("apolkosnik.Minimig"));
++        assert!(!is_falcon(""));
++        // the dock's mouse and keyboard at the Minimig core's registers
++        assert!(has_minimig_input("apolkosnik.Falcon"));
++        assert!(has_minimig_input("apolkosnik.Falcon060"));
++        assert!(has_minimig_input("apolkosnik.Minimig"));
++        assert!(has_minimig_input("apolkosnik.Minimig040"));
++        assert!(!has_minimig_input("apolkosnik.3DO"));
++        assert!(!has_minimig_input("Game-Bub.GBA"));
++        // no light gun
++        assert_eq!(target_for_core("apolkosnik.Falcon"), None);
++        assert_eq!(target_for_core("apolkosnik.Falcon060"), None);
++    }
++
+     #[test]
+     fn minimig_core_and_its_variants() {
+         assert!(is_minimig("apolkosnik.Minimig"));
+diff --git a/firmware/lightgun/src/mouse.rs b/firmware/lightgun/src/mouse.rs
+index 7f7404d4..ed8e447f 100644
+--- a/firmware/lightgun/src/mouse.rs
++++ b/firmware/lightgun/src/mouse.rs
+@@ -281,7 +281,7 @@ pub const TARGET_3DO_MOUSE2: Target = Target {
  pub fn target_for_core(core_id: &str) -> Option<Target> {
      match core_id {
          crate::CORE_3DO => Some(TARGET_3DO),
@@ -51,3 +100,29 @@ diff -ru a/firmware/lightgun/src/mouse.rs b/firmware/lightgun/src/mouse.rs
          _ => None,
      }
  }
+@@ -1762,6 +1762,25 @@ mod tests {
+         assert_eq!(writes(&m.update(2, true, &physical(button::LEFT))), [(0x1030, pack_motion(2, 2))]);
+     }
+ 
++    #[test]
++    fn the_falcon_core_takes_a_dock_mouse() {
++        // apolkosnik/Falcon_GameBub's gb_host.sv: motion 0x1030, buttons 0x1034
++        for id in ["apolkosnik.Falcon", "apolkosnik.Falcon060"] {
++            assert_eq!(target_for_core(id), Some(TARGET_MINIMIG));
++            assert_eq!(second_target_for_core(id), None);
++        }
++        assert_eq!(target_for_core("apolkosnik.falcon"), None);
++        let mut m = Mouse::new();
++        m.set_target(target_for_core("apolkosnik.Falcon060"), CONTROLLER_PAD);
++        assert!(m.enabled());
++        assert_eq!(writes(&m.update(0, false, &physical(0))), [(0x1034, 0)]);
++        m.report(&moved(-7, 4));
++        assert_eq!(
++            writes(&m.update(1, false, &physical(button::LEFT))),
++            [(0x1030, pack_motion(-7, 4)), (0x1034, 1)]
++        );
++    }
++
+     #[test]
+     fn a_variant_of_the_minimig_core_takes_a_dock_mouse() {
+         // the 68040 build (variants/ap68040 there): the same registers

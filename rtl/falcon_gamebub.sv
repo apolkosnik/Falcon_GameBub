@@ -265,6 +265,7 @@ end
 // Input
 // ===========================================================================
 wire [31:0] joy0, joy1;
+wire [15:0] ana0, ana1;
 wire [24:0] ps2_mouse;
 wire [10:0] ps2_key;
 
@@ -280,6 +281,8 @@ gb_input #(.CLK_HZ(CLK_HZ)) inp
 	.stick_lx(input_slots_0_analog_leftX), .stick_ly(input_slots_0_analog_leftY),
 	.stick_rx(input_slots_0_analog_rightX), .stick_ry(input_slots_0_analog_rightY),
 	.p1_active(input_slots_1_active), .p1_a(input_slots_1_buttons_a),
+	.p1_b(input_slots_1_buttons_b), .p1_x(input_slots_1_buttons_x),
+	.p1_start(input_slots_1_buttons_start), .p1_select(input_slots_1_buttons_select),
 	.p1_up(input_slots_1_buttons_up), .p1_down(input_slots_1_buttons_down),
 	.p1_left(input_slots_1_buttons_left), .p1_right(input_slots_1_buttons_right),
 	.p1_lx(input_slots_1_analog_leftX), .p1_ly(input_slots_1_analog_leftY),
@@ -287,7 +290,7 @@ gb_input #(.CLK_HZ(CLK_HZ)) inp
 	.mouse_speed(mouse_speed),
 	.hmouse_valid(hmouse_valid), .hmouse_dx(hmouse_dx), .hmouse_dy(hmouse_dy), .hmouse_btn(hmouse_btn),
 	.hkey_valid(hkey_valid), .hkey_usage(hkey_usage), .hkey_down(hkey_down),
-	.joy0(joy0), .joy1(joy1), .ps2_mouse(ps2_mouse), .ps2_key(ps2_key)
+	.joy0(joy0), .joy1(joy1), .ana0(ana0), .ana1(ana1), .ps2_mouse(ps2_mouse), .ps2_key(ps2_key)
 );
 
 // ===========================================================================
@@ -330,7 +333,7 @@ falcon_system #(.CLK_HZ(CLK_HZ), .TT(0)) system
 	.monitor(m_monitor), .cpu_turbo(!set_falcon_speed),
 	.tt_mode(1'b0), .ttram_sel(2'd0), .tstat_en(1'b0), .net_on(1'b0), .fpu_ok(), .vme_sel(2'd0),
 	.ld_wr(ld_wr), .ld_addr(ld_addr), .ld_data(ld_data), .ld_busy(ld_busy),
-	.ps2_key(ps2_key), .ps2_mouse(ps2_mouse), .joy0(joy0), .joy1(joy1), .ana0(16'd0), .ana1(16'd0),
+	.ps2_key(ps2_key), .ps2_mouse(ps2_mouse), .joy0(joy0), .joy1(joy1), .ana0(ana0), .ana1(ana1),
 	.rtc(65'd0),
 	.nv_init(nv_init), .nv_addr(nv_addr), .nv_din(nv_din), .nv_wr(nv_wr), .nv_dout(nv_dout),
 	.nv_changed(), .nv_ready(nv_ready),
