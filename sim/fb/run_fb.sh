@@ -14,7 +14,8 @@ fail=0
 for c in "+w=320 +h=240 +ce=2" "+w=320 +h=240 +ce=5 +dbl=1" "+w=320 +h=200 +ce=2" "+w=640 +h=480 +ce=5" \
          "+w=640 +h=400 +ce=1 +hblank=256 +vblank=90496" "+w=640 +h=400 +ce=2 +lace=1" "+w=320 +h=480 +ce=5" "+w=384 +h=240 +ce=2" \
          "+w=640 +h=200 +ce=2" "+w=320 +h=240 +ce=2 +hdmi=1" "+w=640 +h=480 +ce=5 +hdmi=1" \
-         "+w=640 +h=240 +ce=2 +safe=1" "+w=320 +h=480 +ce=5 +safe=1" "+w=320 +h=240 +ce=2 +safe=1"; do
+         "+w=640 +h=240 +ce=2 +safe=1" "+w=320 +h=480 +ce=5 +safe=1" "+w=320 +h=240 +ce=2 +safe=1" \
+         "+w=200 +h=240 +ce=2" "+w=160 +h=240 +ce=2" "+w=320 +h=120 +ce=2" "+w=200 +h=240 +ce=2 +hdmi=1"; do
 	out=$(./obj_fb/Vtb_fb $c | grep -E "^gb_fb|PASS|FAIL")
 	echo "$out" | head -1
 	echo "$out" | grep -q PASS || fail=1

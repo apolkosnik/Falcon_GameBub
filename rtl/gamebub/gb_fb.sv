@@ -324,9 +324,13 @@ always @(posedge clk_av) begin
 			calc <= 4'd3;
 		end
 		4'd3: begin
-			// neither factor more than twice the other
-			if (v_sx > {v_sy[1:0], 1'b0}) v_sx <= {v_sy[1:0], 1'b0};
-			if (v_sy > {v_sx[1:0], 1'b0}) v_sy <= {v_sx[1:0], 1'b0};
+			// neither factor more than twice the other (compared at 4 bits: a
+			// factor of 4 is 3'b100, and its two low bits alone are 0, which
+			// clamped the other factor to 0: pictures up to 200 wide, or up to
+			// 120 high, were not shown. Where a factor is clamped the other is
+			// 1, so twice it fits in 3 bits.)
+			if ({1'b0, v_sx} > {v_sy, 1'b0}) v_sx <= {v_sy[1:0], 1'b0};
+			if ({1'b0, v_sy} > {v_sx, 1'b0}) v_sy <= {v_sx[1:0], 1'b0};
 			calc <= 4'd4;
 		end
 		4'd4: begin

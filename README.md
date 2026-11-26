@@ -13,7 +13,9 @@ crossbar, the YM2149, the MFP, the ACIAs and IKBD, the blitter, the NVRAM/RTC, t
 controller, IDE and SCSI. What the MiSTer's ARM and its framework do around the machine is
 done here by the FPGA itself, and the Game Bub's MCU only loads and saves files.
 
-**Status: experimental, not yet run on a Game Bub.** In full-system simulation (Verilator,
+**Status: experimental.** Releases: [releases/README.md](releases/README.md) and the
+repository's GitHub releases (a zip with both cores, the firmware files and `INSTALL.txt`).
+Builds have been run on a Game Bub (rev 4). In full-system simulation (Verilator,
 the whole core with models of the board's SDRAM and SRAM and of the firmware) EmuTOS 1.3
 boots; see *Simulation*. The bitstream is built with Vivado 2018.3; see *Building* for its
 timing.
@@ -168,7 +170,7 @@ and the panel or HDMI scanned through the external picture as their drivers do.
 | Test | |
 |---|---|
 | `sim/sdr/run_sdr.sh` | `gb_sdram` against the SDRAM model: memarb's protocol at random (bursts of 1 and 4 beats, byte-masked writes, row misses in every bank), every beat read checked against a shadow copy, then 70 ms of refresh alone |
-| `sim/fb/run_fb.sh` | `gb_fb` with the SRAM model and the framework's two sides: 14 cases (320 x 200, 320 x 240 sent doubled, 320 x 480, 384 x 240 cut at the sides, 640 x 200, 640 x 400 mono at 32 MHz pixels, 640 x 400 interlaced, 640 x 480 VGA; panel and HDMI; both SRAM timings), a new picture every frame, every pixel of every screen frame checked |
+| `sim/fb/run_fb.sh` | `gb_fb` with the SRAM model and the framework's two sides: 18 cases (160 x 240 and 200 x 240 scaled 4 times across (200 x 240 then cut at the sides; on HDMI too), 320 x 120 scaled 4 times down, 320 x 200, 320 x 240 sent doubled, 320 x 480, 384 x 240 cut at the sides, 640 x 200, 640 x 400 mono at 32 MHz pixels, 640 x 400 interlaced, 640 x 480 VGA; panel and HDMI; both SRAM timings), a new picture every frame, every pixel of every screen frame checked |
 | `boot_ide`, `boot_scsi`, `boot_fd` | EmuTOS boots from a FAT16 hard disk on IDE, the same disk on SCSI, and a floppy, runs `\AUTO\WRTEST.PRG` (`sim/asm/wrtest.s`), which writes `WROTE.TXT`; the file must then be in the image (read with mtools), and the last screen must be Videl's last frame as `gb_fb` scales it |
 
 `sim/make_media.sh` makes the disk images.

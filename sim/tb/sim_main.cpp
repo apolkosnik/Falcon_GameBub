@@ -169,14 +169,15 @@ static bool serving = false;
 static long n_reads = 0, n_writes = 0;
 static bool verbose_io = false;
 static bool dsp_state = false;
-static bool rtc_trace = false;
+static bool rtc_trace = false;   // --rtc-trace: every CPU access to the MC146818 ($FF8961/3)
+static bool scsi_trace = false;  // --scsi-trace: the 5380's BSY sources (ICR, MR, AIP), the target's bus state, state, phase, REQ and command, each change
 // --pad0 / --pad1 BUTTONS:LX:LY: a controller held so for the whole run
 // (BUTTONS in tb_top's order, hex: 0 a 1 b 2 x 3 y 4 up 5 down 6 left 7 right
 // 8 l1 9 r1 10 start 11 select; LX, LY the left stick, -128..127); --pad1
 // makes slot 1 active, --pad1-idle holds its buttons with the slot inactive
 static uint32_t pad_btn[2] = {0, 0};
 static int pad_lx[2] = {0, 0}, pad_ly[2] = {0, 0};
-static bool slot1 = false;      // --rtc-trace: every CPU access to the MC146818 ($FF8961/3)
+static bool slot1 = false;
 // --audio-ramp FROM_MS:STEP (sim/asm/dspsnd.s): from FROM_MS on, the codec's
 // output must be the DSP's sawtooth: every sample the left channel STEP*2
 // (two slots a frame) on from the last, the right channel STEP on from the
@@ -290,6 +291,7 @@ int main(int argc, char **argv) {
 		else if (a == "--verbose-io") verbose_io = true;
 		else if (a == "--dsp-state") dsp_state = true;
 		else if (a == "--rtc-trace") rtc_trace = true;
+		else if (a == "--scsi-trace") scsi_trace = true;
 		else if ((a == "--pad0" || a == "--pad1" || a == "--pad1-idle") && more) {
 			int k = a == "--pad0" ? 0 : 1;
 			if (sscanf(argv[++i], "%x:%d:%d", &pad_btn[k], &pad_lx[k], &pad_ly[k]) < 1) { fprintf(stderr, "%s BUTTONS:LX:LY\n", a.c_str()); return 1; }
@@ -389,6 +391,30 @@ int main(int argc, char **argv) {
 				if (r->tb_top__DOT__dut__DOT__system__DOT__nvram__DOT__wr_data) { printf("[%9.3f ms] rtc: [%02x] <- %02x\n", ms, idx, din); n_tr++; }
 				if (r->tb_top__DOT__dut__DOT__system__DOT__nvram__DOT__rd_data) { printf("[%9.3f ms] rtc: [%02x] -> %02x\n", ms, idx, dout); n_tr++; }
 			}
+		}
+
+		if (scsi_trace && sys_rise) {
+			// the 5380's sources of BSY (falcon_scsi: bsy_line = target | ICR bit 3 |
+			// MR bit 0 & AIP) and the target's bus state, each change
+			auto *r = top->rootp;
+			static unsigned icr_d = ~0u, mr_d = ~0u, aip_d = ~0u, bst_d = ~0u;
+			static long n_sc = 0;
+			unsigned icr = r->tb_top__DOT__dut__DOT__system__DOT__scsi__DOT__icr;
+			unsigned mr = r->tb_top__DOT__dut__DOT__system__DOT__scsi__DOT__mr;
+			unsigned aip = r->tb_top__DOT__dut__DOT__system__DOT__scsi__DOT__aip;
+			unsigned bst = r->tb_top__DOT__dut__DOT__system__DOT__scsi__DOT__bst;
+			unsigned st = r->tb_top__DOT__dut__DOT__system__DOT__scsi__DOT__st;
+			unsigned ph = r->tb_top__DOT__dut__DOT__system__DOT__scsi__DOT__ph;
+			unsigned c0 = r->tb_top__DOT__dut__DOT__system__DOT__scsi__DOT__c0;
+			unsigned rq = r->tb_top__DOT__dut__DOT__system__DOT__scsi__DOT__t_req;
+			unsigned tid = r->tb_top__DOT__dut__DOT__system__DOT__scsi__DOT__tid;
+			static unsigned st_d = ~0u, ph_d = ~0u, rq_d = ~0u;
+			if ((icr != icr_d || mr != mr_d || aip != aip_d || bst != bst_d || st != st_d || ph != ph_d || rq != rq_d) && n_sc < 4000) {
+				printf("[%9.3f ms] scsi: icr %02x mr %02x aip %u bst %u | target %u state %u phase %u req %u cmd %02x\n",
+				       now_ms(), icr, mr, aip, bst, tid, st, ph, rq, c0);
+				n_sc++;
+			}
+			icr_d = icr; mr_d = mr; aip_d = aip; bst_d = bst; st_d = st; ph_d = ph; rq_d = rq;
 		}
 
 		if (av_rise) {

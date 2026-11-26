@@ -59,12 +59,15 @@ if [ "$what" = system ] || [ "$what" = all ]; then
 	[ -n "$TOS" ] || { echo "TOS=<EmuTOS 512 KB image> for the system tests" >&2; exit 1; }
 	./make_media.sh > /dev/null
 	mkdir -p out
+	# 20 s: EmuTOS 1.3 selects every SCSI ID (the empty CD-ROM at ID 2
+	# answers, the others time out) before it boots; WROTE.TXT is written
+	# at about 9.5 s (IDE), 12 s (SCSI) and 14.5 s (floppy)
 	pids=""
 	for c in ide:--ide0:hd.img scsi:--scsi0:hd.img fd:--fda:fd.st; do
 		n=${c%%:*}; r=${c#*:}; opt=${r%%:*}; img=${r#*:}
 		mkdir -p out/t_$n
 		cp media/$img out/t_$n/disk.img
-		$BIN --tos "$TOS" $opt out/t_$n/disk.img --write-back --ms ${MS:-8000} \
+		$BIN --tos "$TOS" $opt out/t_$n/disk.img --write-back --ms ${MS:-20000} \
 			--pc-every 500 --screens out/t_$n --screen-every 60 --check-screen > out/t_$n.log 2>&1 &
 		pids="$pids $!"
 	done

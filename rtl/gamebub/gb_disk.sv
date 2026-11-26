@@ -1,7 +1,11 @@
 // Game Bub Falcon: the disks. falcon_system asks for 512-byte blocks the
 // way MiSTer's hps_io serves them (slots 0 floppy A, 1 floppy B, 2 IDE
 // master, 3 IDE slave, 4 SCSI 0, 5 SCSI 1; 6, the SCSI CD-ROM, is never
-// mounted here); this module serves them from the image files on the
+// mounted here, but its requests are served as an empty image's: falcon_scsi
+// answers selection at ID 2 with no medium and asks slot 6 for its INQUIRY,
+// READ CAPACITY and MODE SENSE window blocks; unanswered, the target kept BSY
+// and every later SCSI selection waited for a free bus until it timed out);
+// this module serves them from the image files on the
 // microSD card with the framework's on-demand file commands (FileGetSize,
 // FileRead, FileWrite, FileFlush), through a 16 KB buffer that the firmware
 // reads and writes over the host memory interface (gb_host, 0x3000_0000).
@@ -100,7 +104,7 @@ always @(posedge clk) begin
 end
 
 // ------------------------------------------------------------- slots
-reg [40:0] size [0:5];            // bytes (an image of up to 2 TB)
+reg [40:0] size [0:6];            // bytes (an image of up to 2 TB; slot 6 always 0)
 reg  [5:0] dirty = 6'd0;
 reg [27:0] flush_cnt = 28'd0;
 
@@ -143,7 +147,7 @@ always @(posedge clk) begin
 		sd_ack      <= 7'd0;
 		dirty       <= 6'd0;
 		dbg_mounted <= 6'd0;
-		for (int i = 0; i < 6; i++) size[i] <= 41'd0;
+		for (int i = 0; i < 7; i++) size[i] <= 41'd0;
 	end
 	else case (state)
 	S_IDLE:
@@ -154,7 +158,7 @@ always @(posedge clk) begin
 		end
 		else if (ready) begin
 			// a request of the next slot in turn
-			if ((sd_rd[rr] || sd_wr[rr]) && rr < 3'd6) begin
+			if ((sd_rd[rr] || sd_wr[rr]) && rr < 3'd7) begin
 				slot  <= rr;
 				state <= S_REQ;
 			end
@@ -162,7 +166,7 @@ always @(posedge clk) begin
 				slot <= (dirty[0] ? 3'd0 : dirty[1] ? 3'd1 : dirty[2] ? 3'd2 : dirty[3] ? 3'd3 : dirty[4] ? 3'd4 : 3'd5);
 				state <= S_FLUSH;
 			end
-			rr <= (rr == 3'd5) ? 3'd0 : rr + 3'd1;
+			rr <= (rr == 3'd6) ? 3'd0 : rr + 3'd1;
 		end
 
 	// ---------------------------------------------- mounting
